@@ -30,5 +30,4 @@ Thumbs.db
 *.sublime-project
 *.sublime-workspace
 
-# Dossiers spécifiques
-frontend/ 
+# Dossiers spécifiques 
