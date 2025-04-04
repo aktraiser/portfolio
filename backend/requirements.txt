@@ -3,5 +3,6 @@ quart-cors>=0.7.0
 python-dotenv>=1.0.0
 hypercorn>=0.15.0
 openai>=1.0.0
+gunicorn>=21.2.0
 
 

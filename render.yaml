@@ -15,4 +15,14 @@ services:
         value: 1
       - key: NEXT_SKIP_LINT
         value: 1
-    autoDeploy: true 
+    autoDeploy: true
+  - type: web
+    name: portfolio-backend
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn "wsgi:app" --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PYTHON_VERSION
+        value: 3.11.0 
