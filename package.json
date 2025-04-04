@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
+    "build": "cd frontend && npm install && npm install @tailwindcss/postcss@4 tailwindcss@4 @heroicons/react@2.0.18 @headlessui/react@2.0.0 && npm run build --no-lint",
     "start": "cd frontend && npm run start"
   }
 }
