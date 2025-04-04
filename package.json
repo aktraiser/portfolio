@@ -1,5 +1,14 @@
 {
+  "name": "portfolio",
+  "version": "1.0.0",
+  "private": true,
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.1"
+    "@supabase/supabase-js": "^2.49.1",
+    "next": "15.2.3"
+  },
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm run start"
   }
 }
