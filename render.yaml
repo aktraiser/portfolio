@@ -20,9 +20,11 @@ services:
     name: portfolio-backend
     runtime: python
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && gunicorn "wsgi:app" --bind 0.0.0.0:$PORT
+    startCommand: cd backend && hypercorn wsgi:app --bind 0.0.0.0:$PORT --workers 4 --log-level INFO
     envVars:
       - key: PORT
         value: 10000
       - key: PYTHON_VERSION
-        value: 3.11.0 
+        value: 3.11.0
+      - key: LOG_LEVEL
+        value: INFO 
