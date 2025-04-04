@@ -1,3 +1,8 @@
+# Ajout pour corriger le chemin d'importation sur Render
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import os
 import socket
 import logging
