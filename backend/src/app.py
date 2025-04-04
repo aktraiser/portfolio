@@ -1,19 +1,23 @@
 # Ajout pour corriger le chemin d'importation sur Render
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pathlib
 
-import os
+# Ajouter le répertoire backend au PYTHONPATH
+current_file = pathlib.Path(__file__).resolve()
+parent_dir = current_file.parent.parent  # Dossier backend
+sys.path.insert(0, str(parent_dir))
+
 import socket
 import logging
 from quart import Quart, request, jsonify
 from quart_cors import cors
 from dotenv import load_dotenv
-# Modification des importations pour utiliser des chemins relatifs
-from .services.llama_service import LlamaService
-from .services.openai_service import OpenAIService
+# Revenir aux importations absolues
+from src.services.llama_service import LlamaService
+from src.services.openai_service import OpenAIService
 # Services Agno spécialisés dans un seul module maintenant
-from .services.agno_services import AgnoService, PresentationAgnoService, ProjectAgnoService, InfoAgnoService
+from src.services.agno_services import AgnoService, PresentationAgnoService, ProjectAgnoService, InfoAgnoService
 from werkzeug.utils import secure_filename
 import asyncio
 
