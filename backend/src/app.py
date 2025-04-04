@@ -9,10 +9,11 @@ import logging
 from quart import Quart, request, jsonify
 from quart_cors import cors
 from dotenv import load_dotenv
-from services.llama_service import LlamaService
-from services.openai_service import OpenAIService
+# Modification des importations pour utiliser des chemins relatifs
+from .services.llama_service import LlamaService
+from .services.openai_service import OpenAIService
 # Services Agno spécialisés dans un seul module maintenant
-from services.agno_services import AgnoService, PresentationAgnoService, ProjectAgnoService, InfoAgnoService
+from .services.agno_services import AgnoService, PresentationAgnoService, ProjectAgnoService, InfoAgnoService
 from werkzeug.utils import secure_filename
 import asyncio
 
