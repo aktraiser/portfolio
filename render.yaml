@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: portfolio-frontend
+    env: node
+    buildCommand: |
+      cd frontend && 
+      npm install && 
+      npm install tailwindcss@4 @tailwindcss/postcss@4 @heroicons/react@2.0.18 @headlessui/react@2.0.0 && 
+      npm run build --no-lint
+    startCommand: cd frontend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: 1
+      - key: NEXT_SKIP_LINT
+        value: 1
+    autoDeploy: true 
