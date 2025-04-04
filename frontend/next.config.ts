@@ -15,6 +15,10 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'dlthjkunkbehgpxhmgub.supabase.co',
+      },
+      {
+        protocol: 'https',
+        hostname: 'media.licdn.com',
       }
     ],
   }

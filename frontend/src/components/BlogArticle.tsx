@@ -1,28 +1,5 @@
 import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/react/20/solid'
 
-export interface BlogArticleProps {
-  tag?: string;
-  title: string;
-  introduction: string;
-  mainContent: string;
-  keyPoints?: Array<{
-    title: string;
-    content: string;
-  }>;
-  subheading1?: string;
-  subheading1Content?: string;
-  quote?: {
-    text: string;
-    authorName: string;
-    authorTitle: string;
-    authorImageUrl: string;
-  };
-  mainImageUrl?: string;
-  mainImageCaption?: string;
-  subheading2?: string;
-  subheading2Content?: string;
-  conclusion?: string;
-}
 
 export default function BlogArticle({
   tag = 'Introducing',

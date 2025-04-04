@@ -7,8 +7,8 @@ import Expertise from '../components/Expertise';
 
 export default function Home() {
   return (
-    <div>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div className="bg-black">
+      <div className="bg-black max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <section className="mb-12">
           <ChatInput />
         </section>
@@ -16,8 +16,6 @@ export default function Home() {
       </div>
 
       <BlogPosts />
-      <Expertise />
-
       <Blog />
 
 

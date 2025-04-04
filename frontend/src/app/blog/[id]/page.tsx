@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useParams } from 'next/navigation';
 import BlogArticleContent from '@/components/BlogArticleContent';
+import Link from 'next/link';
 
 // Configuration Supabase sécurisée
 const supabaseUrl = 'https://dlthjkunkbehgpxhmgub.supabase.co';
@@ -67,8 +68,16 @@ export default function ArticlePage() {
   const articleId = params.id as string;
   
   const [article, setArticle] = useState<Article | null>(null);
+  const [recommendedArticle, setRecommendedArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Formatage de la date
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'Date non spécifiée';
+    const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric' };
+    return new Date(dateString).toLocaleDateString('fr-FR', options);
+  };
 
   useEffect(() => {
     // Initialiser Supabase uniquement côté client
@@ -102,6 +111,23 @@ export default function ArticlePage() {
           // Conversion sécurisée
           const typedData = data as unknown as Article;
           setArticle(typedData);
+          
+          // Chercher un article recommandé différent de l'article actuel
+          const { data: recommendedData, error: recommendedError } = await supabase
+            .from('articles')
+            .select('*')
+            .neq('id', articleId)
+            .limit(1);
+            
+          if (!recommendedError && recommendedData && recommendedData.length > 0) {
+            setRecommendedArticle(recommendedData[0] as unknown as Article);
+          } else {
+            // Fallback vers un article statique différent
+            const fallbackRecommended = staticArticles.find(a => a.id !== articleId);
+            if (fallbackRecommended) {
+              setRecommendedArticle(fallbackRecommended);
+            }
+          }
         }
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Une erreur inconnue est survenue';
@@ -112,6 +138,12 @@ export default function ArticlePage() {
         const staticArticle = staticArticles.find(a => a.id === articleId);
         if (staticArticle) {
           setArticle(staticArticle);
+          
+          // Définir un article recommandé statique
+          const fallbackRecommended = staticArticles.find(a => a.id !== articleId);
+          if (fallbackRecommended) {
+            setRecommendedArticle(fallbackRecommended);
+          }
         }
       } finally {
         setLoading(false);
@@ -155,14 +187,15 @@ export default function ArticlePage() {
           <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center z-20">
             <div className="text-center px-4 max-w-4xl">
               <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">{article.titre}</h1>
-              <p className="text-xl text-white/80 mb-6">{article.resume}</p>
-              <div className="text-sm text-white/60">
-                Publié le {new Date(article.date_publication).toLocaleDateString('fr-FR', { 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
-                })} par {article.auteur || 'Admin'}
-              </div>
+              {article.categories && article.categories.length > 0 && (
+                <div className="mt-4">
+                  {article.categories.map((category, index) => (
+                    <span key={index} className="inline-block bg-[#B82EAF]/30 text-white text-sm font-medium mr-2 px-3 py-1 rounded-md">
+                      {category}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -170,53 +203,23 @@ export default function ArticlePage() {
       
       <div className="pt-8">
         <BlogArticleContent
-          tag={article.categories && article.categories.length > 0 ? article.categories[0] : "Article"}
+          tag={undefined}
           title={!article.image_url ? article.titre : ''}
           introduction={!article.image_url ? article.resume : ''}
-          htmlContent={formatContentToParagraphs(article.contenu)}
-          keyPoints={[]}
-          mainImageUrl={undefined}
-          mainImageCaption={!article.image_url ? `Article publié le ${new Date(article.date_publication).toLocaleDateString('fr-FR', { 
+          htmlContent={article.contenu}
+          publishDate={new Date(article.date_publication).toLocaleDateString('fr-FR', { 
             year: 'numeric', 
             month: 'long', 
             day: 'numeric' 
-          })} par ${article.auteur || 'Admin'}` : undefined}
-          conclusion="Merci d'avoir lu cet article. N'hésitez pas à explorer nos autres contenus sur le blog."
+          })}
+          author={article.auteur || 'Admin'}
+          keyPoints={[]}
+          mainImageUrl={undefined}
+          mainImageCaption={undefined}
+          conclusion=""
+          recommendedArticle={recommendedArticle || undefined}
         />
-      </div>
-      <div className="max-w-3xl mx-auto pb-16 flex justify-center">
-        <a 
-          href="/blog" 
-          className="inline-flex items-center gap-x-2 rounded-md bg-indigo-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-1">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
-          </svg>
-          Retour aux articles
-        </a>
       </div>
     </div>
   );
-}
-
-// Fonction pour formatter le contenu en paragraphes
-function formatContentToParagraphs(content: string): string {
-  // Si le contenu est déjà formaté avec des balises HTML, on le retourne tel quel
-  if (content.includes('<p>') || content.includes('<div>')) {
-    return content;
-  }
-  
-  // Sinon, on divise le texte en paragraphes
-  const paragraphs = content.split(/\n\n+/);
-  
-  if (paragraphs.length === 1) {
-    // S'il n'y a qu'un seul paragraphe, essayer de diviser par des sauts de ligne simples
-    paragraphs.splice(0, 1, ...content.split(/\n+/));
-  }
-  
-  // On entoure chaque paragraphe avec des balises <p>
-  return paragraphs
-    .filter(p => p.trim() !== '') // Ignorer les paragraphes vides
-    .map(p => `<p>${p.trim()}</p>`)
-    .join('\n\n');
 } 

@@ -1,0 +1,157 @@
+import os
+from quart import Quart, request, jsonify
+from quart_cors import cors
+from dotenv import load_dotenv
+from services.llama_service import LlamaService
+from services.openai_service import OpenAIService
+# Pour une future implémentation avec des agents plus avancés:
+from services.agno_example import AgnoService
+from werkzeug.utils import secure_filename
+import logging
+import asyncio
+
+# Configuration du logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Chargement des variables d'environnement
+load_dotenv()
+
+app = Quart(__name__)
+app = cors(app, allow_origin="*")
+
+# Configuration
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'mp3', 'wav'}
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Initialisation des services
+llama_service = LlamaService()
+openai_service = OpenAIService()
+# Activation de l'agent Agno
+agno_service = AgnoService()
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/api/chat', methods=['POST'])
+async def chat():
+    try:
+        data = await request.get_json()
+        message = data.get('message', '')
+        
+        # Récupérer le contexte pertinent
+        context = await llama_service.get_relevant_context(message)
+        
+        # Générer une réponse avec le contexte
+        response = await openai_service.generate_response(message, context)
+        
+        return jsonify({
+            'response': response,
+            'context': context
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/agno_chat', methods=['POST'])
+async def agno_chat():
+    """Nouvel endpoint utilisant Agno pour générer des réponses"""
+    try:
+        data = await request.get_json()
+        message = data.get('message', '')
+        
+        # Récupérer le contexte pertinent
+        context = await llama_service.get_relevant_context(message)
+        
+        # Générer une réponse avec Agno
+        response = await agno_service.generate_response(message, context)
+        
+        return jsonify({
+            'response': response,
+            'context': context
+        })
+    except Exception as e:
+        logger.error(f"Error in agno_chat: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/context', methods=['POST'])
+async def get_context():
+    try:
+        data = await request.get_json()
+        message = data.get('message', '')
+        
+        # Récupérer le contexte pertinent
+        context = await llama_service.get_relevant_context(message)
+        
+        return jsonify({
+            'context': context
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/query', methods=['POST'])
+async def query():
+    try:
+        data = await request.get_json()
+        message = data.get('message', '')
+        
+        # Générer une réponse avec le contexte
+        response = await llama_service.query_with_context(message)
+        
+        return jsonify({
+            'response': response
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/upload', methods=['POST'])
+async def upload_file():
+    try:
+        files = await request.files
+        if 'file' not in files:
+            return {'error': 'No file part'}, 400
+            
+        file = files['file']
+        if file.filename == '':
+            return {'error': 'No selected file'}, 400
+            
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            await file.save(filepath)
+            
+            return {
+                'message': 'File uploaded successfully',
+                'filename': filename
+            }
+            
+        return {'error': 'File type not allowed'}, 400
+
+    except Exception as e:
+        logger.error(f"Error in upload endpoint: {str(e)}")
+        return {'error': str(e)}, 500
+
+@app.route('/', methods=['GET'])
+async def root():
+    return jsonify({
+        'message': 'Bienvenue sur l\'API Portfolio',
+        'endpoints': {
+            'health': '/api/health',
+            'chat': '/api/chat',
+            'context': '/api/context',
+            'query': '/api/query',
+            'upload': '/api/upload'
+        }
+    })
+
+@app.route('/api/health', methods=['GET'])
+async def health_check():
+    return jsonify({'status': 'healthy'})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port) 

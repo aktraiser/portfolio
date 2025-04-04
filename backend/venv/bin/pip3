@@ -1,4 +1,4 @@
-#!/Users/lucas.bometon/Desktop/projets/portfolio/backend/venv/bin/python
+#!/Users/lucasbometon/Documents/code/portfolio/portfolio/backend/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

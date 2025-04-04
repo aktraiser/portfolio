@@ -7,9 +7,30 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   audioUrl?: string;
+  actions?: Action[];
 }
 
-const API_URL = 'http://localhost:3001/api';
+// Interface pour les actions
+interface Action {
+  type: string;
+  label: string;
+  url: string;
+  metadata?: {
+    duration?: string;
+    type?: string;
+    [key: string]: any;
+  };
+}
+
+// Interface pour gérer la réponse de l'API
+interface ApiResponse {
+  response: string;
+  context?: string;
+  session_id?: string;
+  actions?: Action[];
+}
+
+const API_URL = 'http://localhost:5003/api';
 
 // Ajout du composant LoadingDots
 const LoadingDots = () => {
@@ -25,6 +46,23 @@ const LoadingDots = () => {
   );
 };
 
+// Composant pour le bouton d'action
+const ActionButton: React.FC<{ action: Action }> = ({ action }) => {
+  return (
+    <button
+      onClick={() => window.open(action.url, '_blank')}
+      className="mt-4 w-full bg-[#3B9BFF] text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
+    >
+      {action.type === 'schedule_meeting' && (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
+        </svg>
+      )}
+      {action.label}
+    </button>
+  );
+};
+
 export function ChatInput() {
   const [inputValue, setInputValue] = useState('');
   const [isConversationOpen, setIsConversationOpen] = useState(false);
@@ -34,8 +72,33 @@ export function ChatInput() {
   const [isLoading, setIsLoading] = useState(false);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [placeholderText, setPlaceholderText] = useState("Comment puis-je vous aider ?");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const audioChunks = useRef<Blob[]>([]);
+  
+  // Animation du placeholder
+  useEffect(() => {
+    const placeholders = [
+      "Comment puis-je vous aider ?",
+      "Vous avez un projet ?",
+      "Vous avez une question ?"
+    ];
+    
+    // Si la conversation est ouverte, on fixe le placeholder à "Posez une question"
+    if (isConversationOpen) {
+      setPlaceholderText("Posez une question");
+      return; // On sort de l'effet pour ne pas démarrer l'intervalle
+    }
+    
+    let index = 0;
+    
+    const intervalId = setInterval(() => {
+      index = (index + 1) % placeholders.length;
+      setPlaceholderText(placeholders[index]);
+    }, 3000);
+    
+    return () => clearInterval(intervalId);
+  }, [isConversationOpen]); // Ajout de la dépendance isConversationOpen
   
   // Détection du mobile
   useEffect(() => {
@@ -131,14 +194,15 @@ export function ChatInput() {
         setIsLoading(true);
 
         try {
-          const response = await fetch(`${API_URL}/chat/audio`, {
+          // Pour l'instant, comme nous n'avons pas d'endpoint audio,
+          // envoyons juste un message texte standard à l'API
+          const response = await fetch(`${API_URL}/agno_chat`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              audioData,
-              format: 'wav'
+              message: "Message audio transcrit: <Transcription non disponible>"
             }),
           });
 
@@ -148,19 +212,88 @@ export function ChatInput() {
 
           const data = await response.json();
           
-          // Créer un Blob à partir de la réponse audio
-          const audioResponseBlob = new Blob([Buffer.from(data.audioResponse)], { type: 'audio/wav' });
-          const audioUrl = URL.createObjectURL(audioResponseBlob);
+          let finalContent: string = '';
+          let finalActions: Action[] | undefined = undefined;
 
+          // Prioritize top-level 'actions' if it exists and is a valid array
+          if (Array.isArray(data.actions) && data.actions.length > 0) {
+              console.log('ℹ️ Utilisation des champs "response" et "actions" de premier niveau.');
+              finalContent = typeof data.response === 'string' ? data.response : JSON.stringify(data.response); // Ensure content is a string
+              finalActions = data.actions;
+          }
+          // If top-level 'actions' is missing or empty, check if 'response' might contain the nested structure
+          else if (typeof data.response === 'string') {
+              console.log('ℹ️ Champ "actions" de premier niveau absent ou vide. Tentative de parsing du champ "response".');
+              try {
+                  // Replace single quotes ONLY if it looks like a Python dict literal string
+                  let potentialJsonString = data.response;
+                  // Basic check if it looks like an object string
+                  if (potentialJsonString.trim().startsWith('{') && potentialJsonString.trim().endsWith('}')) {
+                     // WARNING: This replace is fragile and might corrupt content if the string contains single quotes.
+                     console.log('Original string to parse:', potentialJsonString);
+                     // Replace single quotes used for keys/values with double quotes
+                     potentialJsonString = potentialJsonString.replace(/'/g, '"');
+                     // Attempt to fix common issues like d" => d'
+                     potentialJsonString = potentialJsonString.replace(/([a-zA-Z])"([a-zA-Z])/g, "$1'$2");
+                     console.log('String after replace attempt:', potentialJsonString);
+                  } else {
+                      console.log('String does not look like dict literal, using as is.');
+                  }
+
+                  const parsedInnerData = JSON.parse(potentialJsonString);
+
+                  // Check if the parsed object has the expected structure
+                  if (parsedInnerData && typeof parsedInnerData.response === 'string') {
+                      finalContent = parsedInnerData.response;
+                      // Use inner actions. Ensure it's an array.
+                      finalActions = Array.isArray(parsedInnerData.actions) ? parsedInnerData.actions : undefined;
+                      console.log('✅ Données internes JSON parsées avec succès depuis le champ "response". Inner actions:', finalActions);
+                  } else {
+                      // Parsed object structure is unexpected. Use original 'response' string as content.
+                      finalContent = data.response;
+                      finalActions = undefined; // No valid actions found
+                      console.warn('⚠️ Structure JSON interne inattendue après parsing. Utilisation de la chaîne "response" originale comme contenu.');
+                  }
+              } catch (e) {
+                  // Parsing failed. Treat 'response' string as plain content.
+                  finalContent = data.response;
+                  finalActions = undefined; // No valid actions found
+                  console.log('ℹ️ Échec du parsing JSON interne. Utilisation de la chaîne "response" originale comme contenu. Erreur:', e);
+              }
+          }
+          // Default case: 'response' is not a string or 'actions' was missing/empty and parsing failed/not attempted
+          else {
+               finalContent = data.response ? JSON.stringify(data.response) : ''; // Ensure content is string, handle non-string response
+               finalActions = undefined; // No actions available
+               console.log('ℹ️ Cas par défaut: Utilisation du champ "response" comme contenu. Aucune action valide trouvée.');
+          }
+
+          // Créer le message de l'assistant
           const assistantMessage: ChatMessage = {
             role: 'assistant',
-            content: data.text,
-            audioUrl
+            content: finalContent,
+            // S'assurer que finalActions est bien un tableau avant de mapper
+            actions: Array.isArray(finalActions) ? finalActions.map((action: Action) => ({
+              type: action.type,
+              label: action.label,
+              url: action.url,
+              metadata: action.metadata
+            })) : undefined // Mettre undefined si ce n'est pas un tableau valide
           };
           
-          setMessages(prev => [...prev, assistantMessage]);
+          console.log('💬 Message assistant créé:', assistantMessage);
+          setMessages(prev => {
+            console.log('Messages précédents:', prev);
+            const newMessages = [...prev, assistantMessage];
+            console.log('Nouveaux messages:', newMessages);
+            return newMessages;
+          });
+          
+          if (data.session_id) {
+            console.log('🔑 Session ID reçu:', data.session_id);
+          }
         } catch (error) {
-          console.error('Error sending audio message:', error);
+          console.error('❌ Erreur lors de l\'envoi du message:', error);
         } finally {
           setIsLoading(false);
         }
@@ -184,6 +317,8 @@ export function ChatInput() {
 
   const handleSendMessage = async () => {
     if (inputValue.trim()) {
+      console.log('🚀 Envoi du message:', inputValue.trim());
+      
       const newMessage: ChatMessage = {
         role: 'user',
         content: inputValue.trim()
@@ -195,13 +330,14 @@ export function ChatInput() {
       setIsLoading(true);
       
       try {
-        const response = await fetch(`${API_URL}/chat/text`, {
+        console.log('📤 Requête API en cours...');
+        const response = await fetch(`${API_URL}/agno_chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text: newMessage.content
+            message: newMessage.content
           }),
         });
 
@@ -210,20 +346,90 @@ export function ChatInput() {
         }
 
         const data = await response.json();
+        console.log('📥 Réponse API reçue:', data);
         
-        // Créer un Blob à partir de la réponse audio
-        const audioBlob = new Blob([Buffer.from(data.audioResponse)], { type: 'audio/wav' });
-        const audioUrl = URL.createObjectURL(audioBlob);
+        let finalContent: string = '';
+        let finalActions: Action[] | undefined = undefined;
 
+        // Prioritize top-level 'actions' if it exists and is a valid array
+        if (Array.isArray(data.actions) && data.actions.length > 0) {
+            console.log('ℹ️ Utilisation des champs "response" et "actions" de premier niveau.');
+            finalContent = typeof data.response === 'string' ? data.response : JSON.stringify(data.response); // Ensure content is a string
+            finalActions = data.actions;
+        }
+        // If top-level 'actions' is missing or empty, check if 'response' might contain the nested structure
+        else if (typeof data.response === 'string') {
+            console.log('ℹ️ Champ "actions" de premier niveau absent ou vide. Tentative de parsing du champ "response".');
+            try {
+                // Replace single quotes ONLY if it looks like a Python dict literal string
+                let potentialJsonString = data.response;
+                // Basic check if it looks like an object string
+                if (potentialJsonString.trim().startsWith('{') && potentialJsonString.trim().endsWith('}')) {
+                   // WARNING: This replace is fragile and might corrupt content if the string contains single quotes.
+                   console.log('Original string to parse:', potentialJsonString);
+                   // Replace single quotes used for keys/values with double quotes
+                   potentialJsonString = potentialJsonString.replace(/'/g, '"');
+                   // Attempt to fix common issues like d" => d'
+                   potentialJsonString = potentialJsonString.replace(/([a-zA-Z])"([a-zA-Z])/g, "$1'$2");
+                   console.log('String after replace attempt:', potentialJsonString);
+                } else {
+                    console.log('String does not look like dict literal, using as is.');
+                }
+
+                const parsedInnerData = JSON.parse(potentialJsonString);
+
+                // Check if the parsed object has the expected structure
+                if (parsedInnerData && typeof parsedInnerData.response === 'string') {
+                    finalContent = parsedInnerData.response;
+                    // Use inner actions. Ensure it's an array.
+                    finalActions = Array.isArray(parsedInnerData.actions) ? parsedInnerData.actions : undefined;
+                    console.log('✅ Données internes JSON parsées avec succès depuis le champ "response". Inner actions:', finalActions);
+                } else {
+                    // Parsed object structure is unexpected. Use original 'response' string as content.
+                    finalContent = data.response;
+                    finalActions = undefined; // No valid actions found
+                    console.warn('⚠️ Structure JSON interne inattendue après parsing. Utilisation de la chaîne "response" originale comme contenu.');
+                }
+            } catch (e) {
+                // Parsing failed. Treat 'response' string as plain content.
+                finalContent = data.response;
+                finalActions = undefined; // No valid actions found
+                console.log('ℹ️ Échec du parsing JSON interne. Utilisation de la chaîne "response" originale comme contenu. Erreur:', e);
+            }
+        }
+        // Default case: 'response' is not a string or 'actions' was missing/empty and parsing failed/not attempted
+        else {
+             finalContent = data.response ? JSON.stringify(data.response) : ''; // Ensure content is string, handle non-string response
+             finalActions = undefined; // No actions available
+             console.log('ℹ️ Cas par défaut: Utilisation du champ "response" comme contenu. Aucune action valide trouvée.');
+        }
+
+        // Créer le message de l'assistant
         const assistantMessage: ChatMessage = {
           role: 'assistant',
-          content: data.text,
-          audioUrl
+          content: finalContent,
+          // S'assurer que finalActions est bien un tableau avant de mapper
+          actions: Array.isArray(finalActions) ? finalActions.map((action: Action) => ({
+            type: action.type,
+            label: action.label,
+            url: action.url,
+            metadata: action.metadata
+          })) : undefined // Mettre undefined si ce n'est pas un tableau valide
         };
         
-        setMessages(prev => [...prev, assistantMessage]);
+        console.log('💬 Message assistant créé:', assistantMessage);
+        setMessages(prev => {
+          console.log('Messages précédents:', prev);
+          const newMessages = [...prev, assistantMessage];
+          console.log('Nouveaux messages:', newMessages);
+          return newMessages;
+        });
+        
+        if (data.session_id) {
+          console.log('🔑 Session ID reçu:', data.session_id);
+        }
       } catch (error) {
-        console.error('Error sending message:', error);
+        console.error('❌ Erreur lors de l\'envoi du message:', error);
       } finally {
         setIsLoading(false);
       }
@@ -231,15 +437,9 @@ export function ChatInput() {
   };
 
   const closeConversation = async () => {
-    try {
-      await fetch(`${API_URL}/chat/reset`, {
-        method: 'POST',
-      });
-      setIsConversationOpen(false);
-      setMessages([]);
-    } catch (error) {
-      console.error('Error resetting conversation:', error);
-    }
+    // Suppression de l'appel à un endpoint reset inexistant
+    setIsConversationOpen(false);
+    setMessages([]);
   };
 
   const playAudio = (audioUrl: string) => {
@@ -247,41 +447,87 @@ export function ChatInput() {
     audio.play();
   };
 
+  // Composant pour le rendu des messages
+  const MessageComponent: React.FC<{ message: ChatMessage }> = ({ message }) => {
+    console.log('🎯 Rendu du message:', message);
+    console.log('Actions du message:', message.actions);
+    
+    return (
+      <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        <div 
+          className={`max-w-[80%] p-4 rounded-lg ${
+            message.role === 'user' 
+              ? 'bg-[#B82EAF] text-white rounded-br-none' 
+              : 'bg-gray-100 dark:bg-black text-gray-800 dark:text-gray-200 rounded-bl-none'
+          }`}
+        >
+          <div className="whitespace-pre-wrap">{message.content}</div>
+          {message.actions && message.actions.length > 0 && (
+            <div className="mt-4">
+              {message.actions.map((action, actionIndex) => (
+                <button
+                  key={actionIndex}
+                  onClick={() => {
+                    console.log('🔗 Clic sur l\'action:', action);
+                    window.open(action.url, '_blank');
+                  }}
+                  className="w-full bg-[#B82EAF] text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
+                >
+                  {action.type === 'schedule_meeting' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {message.audioUrl && message.role === 'assistant' && (
+            <button
+              onClick={() => playAudio(message.audioUrl!)}
+              className="mt-2 text-sm text-blue-500 hover:text-blue-600"
+            >
+              Écouter la réponse
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className={`w-full mx-auto relative mb-12 mt-16 transition-all duration-300 rounded-2xl p-6 ${isConversationOpen && !isMobile ? 'conversation-container' : ''}`}>
-      <div className="max-w-3xl mx-auto px-6">
+    <div className={`w-full mx-auto relative ${isMobile ? 'mb-6 mt-6' : 'mb-12 mt-16'} transition-all duration-300 rounded-2xl ${isMobile ? 'p-2' : 'p-6'} ${isConversationOpen && !isMobile ? 'conversation-container' : ''}`}>
+      <div className={`${isMobile ? 'max-w-full px-2' : 'max-w-3xl px-6'} mx-auto`}>
         {/* En-tête aligné à gauche */}
-        <div className="mb-10 text-left">
-          <div className="mb-3">
-            <h1 className="text-5xl font-bold text-white">Hi, I&apos;m 
+        <div className={`${isMobile ? 'mb-4' : 'mb-10'} text-left`}>
+          <div className={`${isMobile ? 'mb-1' : 'mb-3'}`}>
+            <h1 className={`${isMobile ? 'text-4xl' : 'text-5xl'} font-bold text-[#B82EAF]`}>Hi, I&apos;m 
               <span className="inline-flex items-center ml-2">
-                <span className="font-extrabold text-4xl text-white">Lucas !</span>
+                <span className={`font-extrabold ${isMobile ? 'text-3xl' : 'text-4xl'} text-white`}>Lucas !</span>
               </span>
             </h1>
           </div>
-          <div className="text-2xl">
+          <div className={`${isMobile ? 'text-xl' : 'text-2xl'}`}>
             <span className="text-gray-400 font-light">I&apos;m a</span> 
-            <span className="font-bold mx-1 text-white">Lead Designer</span> 
-            <a href="https://linkedin.com/in/yourprofile" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" className="inline-flex ml-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="text-gray-600 hover:text-[#0A66C2]">
-                <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-              </svg>
-            </a>
-            <a href="https://x.com/yourusername" target="_blank" rel="noopener noreferrer" aria-label="X (Twitter)" className="inline-flex ml-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="text-gray-600 hover:text-black">
-                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-              </svg>
-            </a>
-            <a href="https://github.com/yourusername" target="_blank" rel="noopener noreferrer" aria-label="GitHub" className="inline-flex ml-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="text-gray-600 hover:text-black">
-                <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 .75-.13 1.39-.41 1.93-.28.55-.67 1-1.16 1.35-.48.348-1.05.6-1.67.767-.61.165-1.252.254-1.91.254H0V4.51h6.938v-.007zM16.94 16.665c.44.428 1.073.643 1.894.643.59 0 1.1-.148 1.53-.447.396-.29.66-.61.78-.94h2.588c-.403 1.28-1.048 2.2-1.9 2.75-.85.56-1.884.83-3.08.83-.837 0-1.584-.13-2.272-.4-.673-.27-1.24-.65-1.72-1.14-.464-.49-.823-1.08-1.077-1.77-.253-.69-.373-1.45-.373-2.27 0-.803.135-1.54.403-2.23.27-.7.644-1.28 1.12-1.79.495-.51 1.063-.895 1.736-1.194s1.4-.433 2.22-.433c.91 0 1.69.164 2.38.523.67.34 1.22.82 1.66 1.4.426.58.738 1.25.93 2.01.19.75.254 1.57.215 2.43h-7.67c0 .87.23 1.55.7 2.05zm-9.996-10.43c-.26-.23-.62-.35-1.09-.35H2.27v3.29h3.486c.55 0 .963-.108 1.27-.332.305-.224.46-.58.46-1.07 0-.527-.174-.9-.517-1.13zm.573 4.223c-.307-.222-.743-.333-1.306-.333H2.28v3.693h3.783c.563 0 1.03-.11 1.384-.355.345-.233.518-.63.518-1.18 0-.577-.213-.994-.63-1.25l.003-.005zM17.76 6.797c.615 0 1.14.077 1.59.232.437.152.8.362 1.077.625.265.262.455.578.562.945.107.37.16.772.16 1.188h-6.96c.063-.745.25-1.345.427-1.684.515-.988 1.487-1.305 3.153-1.305h-.002z"/>
-              </svg>
-            </a>
-            <a href="https://behance.net/yourusername" target="_blank" rel="noopener noreferrer" aria-label="Behance" className="inline-flex ml-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="text-gray-600 hover:text-[#0057ff]">
-                <path d="M6.938 4.503c.702 0 1.34.06 1.92.188.577.13 1.07.33 1.485.61.41.28.733.65.96 1.12.225.47.34 1.05.34 1.73 0 .74-.17 1.36-.507 1.86-.338.5-.837.9-1.502 1.22.906.26 1.576.72 2.022 1.37.448.66.665 1.45.665 2.36 0 .75-.13 1.39-.41 1.93-.28.55-.67 1-1.16 1.35-.48.348-1.05.6-1.67.767-.61.165-1.252.254-1.91.254H0V4.51h6.938v-.007zM16.94 16.665c.44.428 1.073.643 1.894.643.59 0 1.1-.148 1.53-.447.396-.29.66-.61.78-.94h2.588c-.403 1.28-1.048 2.2-1.9 2.75-.85.56-1.884.83-3.08.83-.837 0-1.584-.13-2.272-.4-.673-.27-1.24-.65-1.72-1.14-.464-.49-.823-1.08-1.077-1.77-.253-.69-.373-1.45-.373-2.27 0-.803.135-1.54.403-2.23.27-.7.644-1.28 1.12-1.79.495-.51 1.063-.895 1.736-1.194s1.4-.433 2.22-.433c.91 0 1.69.164 2.38.523.67.34 1.22.82 1.66 1.4.426.58.738 1.25.93 2.01.19.75.254 1.57.215 2.43h-7.67c0 .87.23 1.55.7 2.05zm-9.996-10.43c-.26-.23-.62-.35-1.09-.35H2.27v3.29h3.486c.55 0 .963-.108 1.27-.332.305-.224.46-.58.46-1.07 0-.527-.174-.9-.517-1.13zm.573 4.223c-.307-.222-.743-.333-1.306-.333H2.28v3.693h3.783c.563 0 1.03-.11 1.384-.355.345-.233.518-.63.518-1.18 0-.577-.213-.994-.63-1.25l.003-.005zM17.76 6.797c.615 0 1.14.077 1.59.232.437.152.8.362 1.077.625.265.262.455.578.562.945.107.37.16.772.16 1.188h-6.96c.063-.745.25-1.345.427-1.684.515-.988 1.487-1.305 3.153-1.305h-.002z"/>
-              </svg>
-            </a>
+            <span className="font-bold mx-1 text-white">Lead IA Designer</span> 
+            <div className={`flex ${isMobile ? 'flex-wrap' : ''} items-center ${isMobile ? 'gap-2 mt-2' : 'gap-4 mt-4'}`}>
+                <div className="bg-[#252339] dark:bg-[#252339] px-4 py-2 rounded-md flex items-center">
+                  <span className="text-white dark:text-white text-sm font-medium">Genrative IA</span>
+                </div>
+                <div className="bg-[#252339] dark:bg-[#252339] px-4 py-2 rounded-md flex items-center">
+                  <span className="text-white dark:text-white text-sm font-medium">LlamaIndex</span>
+                </div>
+                <div className="bg-[#252339] dark:bg-[#252339] px-4 py-2 rounded-md flex items-center">
+                  <span className="text-white dark:text-white text-sm font-medium">HuggingFace</span>
+                </div>
+                <div className="bg-[#252339] dark:bg-[#252339] px-4 py-2 rounded-md flex items-center">
+                  <span className="text-white dark:text-white text-sm font-medium">Fine-tuning</span>
+                </div>
+                <div className="bg-[#252339] dark:bg-[#252339] px-4 py-2 rounded-md flex items-center">
+                  <span className="text-white dark:text-white text-sm font-medium">UX</span>
+                </div>
+              </div>
           </div>
         </div>
 
@@ -289,20 +535,20 @@ export function ChatInput() {
         {(!isConversationOpen || isMobile) && (
           <div className="relative">
             <div className="w-full">
-              <div className="relative rounded-2xl bg-gray-900 dark:bg-gray-800 overflow-hidden">
+              <div className="relative rounded-2xl bg-[#252339] dark:bg-[#252339] overflow-hidden">
                 <textarea
                   ref={textareaRef}
-                  className="w-full px-5 py-6 bg-transparent resize-none outline-none min-h-[90px] max-h-[200px] pr-24 text-white dark:text-white"
-                  placeholder="Comment puis-je vous aider aujourd'hui ?"
+                  className={`w-full ${isMobile ? 'px-3 py-4' : 'px-5 py-6'} bg-transparent resize-none outline-none ${isMobile ? 'min-h-[60px] max-h-[150px]' : 'min-h-[90px] max-h-[200px]'} pr-24 text-white dark:text-white`}
+                  placeholder={placeholderText}
                   value={inputValue}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  rows={3}
+                  rows={isMobile ? 2 : 3}
                 />
                 <div className="absolute right-3 bottom-5 flex gap-2">
                   <button 
                     onClick={isRecording ? stopRecording : startRecording}
-                    className="p-1.5 rounded-full hover:bg-gray-700 dark:hover:bg-gray-700 transition-colors"
+                    className="p-1.5 rounded-full hover:bg-gray-700 dark:hover:bg-[#B82EAF] transition-colors"
                     aria-label={isRecording ? "Arrêter l'enregistrement" : "Démarrer l'enregistrement"}
                   >
                     {isRecording ? (
@@ -313,7 +559,7 @@ export function ChatInput() {
                   </button>
                   <button 
                     onClick={handleSendMessage}
-                    className="p-1.5 rounded-full hover:bg-gray-700 dark:hover:bg-gray-700 transition-colors"
+                    className="p-1.5 rounded-full hover:bg-gray-700 dark:hover:bg-[#B82EAF] transition-colors"
                     aria-label="Envoyer"
                   >
                     <ArrowUp className="h-5 w-5 text-gray-300 dark:text-gray-300" />
@@ -342,25 +588,7 @@ export function ChatInput() {
             <div className="flex-1 overflow-y-auto">
               <div className="p-5 space-y-5">
                 {messages.map((message, index) => (
-                  <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div 
-                      className={`max-w-[80%] p-4 rounded-lg ${
-                        message.role === 'user' 
-                          ? 'bg-[#3B9BFF] text-white rounded-br-none' 
-                          : 'bg-gray-100 dark:bg-black text-gray-800 dark:text-gray-200 rounded-bl-none'
-                      }`}
-                    >
-                      {message.content}
-                      {message.audioUrl && message.role === 'assistant' && (
-                        <button
-                          onClick={() => playAudio(message.audioUrl!)}
-                          className="mt-2 text-sm text-blue-500 hover:text-blue-600"
-                        >
-                          Écouter la réponse
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                  <MessageComponent key={index} message={message} />
                 ))}
                 {isLoading && (
                   <div className="flex justify-start">
@@ -375,7 +603,7 @@ export function ChatInput() {
               <div className="relative">
                 <textarea
                   className="w-full px-4 py-3 bg-gray-100 dark:bg-black border-0 rounded-2xl resize-none outline-none pr-24 text-gray-800 dark:text-gray-200"
-                  placeholder="Tapez votre message..."
+                  placeholder={placeholderText}
                   value={inputValue}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
@@ -383,19 +611,8 @@ export function ChatInput() {
                 />
                 <div className="absolute right-3 bottom-3 flex gap-2">
                   <button 
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className="p-2 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-                    aria-label={isRecording ? "Arrêter l'enregistrement" : "Démarrer l'enregistrement"}
-                  >
-                    {isRecording ? (
-                      <MicOff className="h-5 w-5 text-red-500" />
-                    ) : (
-                      <Mic className="h-5 w-5 text-gray-600 dark:text-gray-300" />
-                    )}
-                  </button>
-                  <button 
                     onClick={handleSendMessage}
-                    className="p-2 rounded-full bg-[#3B9BFF] text-white hover:bg-blue-600 transition-colors"
+                    className="p-2 rounded-full bg-[#252339] text-white hover:bg-[#B82EAF] transition-colors"
                     aria-label="Envoyer"
                   >
                     <ArrowUp className="h-5 w-5" />
@@ -410,76 +627,47 @@ export function ChatInput() {
         {isConversationOpen && isMobile && (
           <div className="fixed inset-0 bg-black z-50 flex">
             <div className="w-full h-full flex flex-col bg-black">
-              <div className="h-16 px-5 border-b border-gray-700 flex justify-between items-center">
-                <h3 className="text-xl font-bold text-white">Conversation</h3>
+              <div className="h-12 px-3 border-b border-gray-700 flex justify-between items-center">
+                <h3 className="text-lg font-bold text-white">Conversation</h3>
                 <button 
                   onClick={closeConversation}
                   className="p-1.5 rounded-full hover:bg-gray-800 text-gray-300"
                   aria-label="Fermer"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
-              <div className="p-5 space-y-5 overflow-y-auto flex-grow">
+              <div className="p-3 space-y-3 overflow-y-auto flex-grow">
                 {messages.map((message, index) => (
-                  <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div 
-                      className={`max-w-[80%] p-4 rounded-lg ${
-                        message.role === 'user' 
-                          ? 'bg-[#3B9BFF] text-white rounded-br-none' 
-                          : 'bg-black text-white rounded-bl-none'
-                      }`}
-                    >
-                      {message.content}
-                      {message.audioUrl && message.role === 'assistant' && (
-                        <button
-                          onClick={() => playAudio(message.audioUrl!)}
-                          className="mt-2 text-sm text-blue-500 hover:text-blue-600"
-                        >
-                          Écouter la réponse
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                  <MessageComponent key={index} message={message} />
                 ))}
                 {isLoading && (
                   <div className="flex justify-start">
-                    <div className="bg-black p-4 rounded-lg rounded-bl-none">
+                    <div className="bg-black p-3 rounded-lg rounded-bl-none">
                       <LoadingDots />
                     </div>
                   </div>
                 )}
               </div>
-              <div className="p-5 border-t border-gray-700">
+              <div className="p-3 border-t border-gray-700">
                 <div className="relative">
                   <textarea
-                    className="w-full px-4 py-3 bg-black border-0 rounded-2xl resize-none outline-none pr-24 text-white placeholder-gray-300"
-                    placeholder="Tapez votre message..."
+                    className="w-full px-3 py-2 bg-black border-0 rounded-2xl resize-none outline-none pr-20 text-white placeholder-gray-300"
+                    placeholder={placeholderText}
                     value={inputValue}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     rows={2}
                   />
-                  <div className="absolute right-3 bottom-3 flex gap-2">
-                    <button 
-                      onClick={isRecording ? stopRecording : startRecording}
-                      className="p-2 rounded-full bg-gray-800 hover:bg-gray-700 transition-colors"
-                      aria-label={isRecording ? "Arrêter l'enregistrement" : "Démarrer l'enregistrement"}
-                    >
-                      {isRecording ? (
-                        <MicOff className="h-5 w-5 text-red-500" />
-                      ) : (
-                        <Mic className="h-5 w-5 text-gray-300" />
-                      )}
-                    </button>
+                  <div className="absolute right-2 bottom-2 flex gap-1.5">
                     <button 
                       onClick={handleSendMessage}
-                      className="p-2 rounded-full bg-[#3B9BFF] text-white hover:bg-blue-600 transition-colors"
+                      className="p-1.5 rounded-full bg-[#252339] text-white hover:bg-blue-600 transition-colors"
                       aria-label="Envoyer"
                     >
-                      <ArrowUp className="h-5 w-5" />
+                      <ArrowUp className="h-4 w-4" />
                     </button>
                   </div>
                 </div>

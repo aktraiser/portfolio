@@ -15,3 +15,6 @@ Ce projet est un site web personnel inspiré du jeu Aktraiser, conçu pour prés
 ## Contact
 
 [Ajouter vos informations de contact] 
+
+cd portfolio/backend && source venv/bin/activate && PORT=5003 python src/app.py
+cd portfolio/frontend && npm run dev
