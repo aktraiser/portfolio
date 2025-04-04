@@ -154,6 +154,147 @@ export function ChatInput() {
     }
   }, [input]);
 
+  // Écouter l'événement du bouton flottant
+  useEffect(() => {
+    const handleFloatingChatSubmit = (e: CustomEvent) => {
+      // On ouvre le volet de conversation
+      setIsConversationOpen(true);
+      
+      // On récupère la question
+      const question = e.detail?.question || '';
+      
+      if (question) {
+        // On définit la question dans l'input
+        setInput(question);
+        
+        // On envoie la question après un court délai
+        setTimeout(() => {
+          // Créer et envoyer le message
+          const newMessage: Message = {
+            role: 'user',
+            content: question
+          };
+          
+          setMessages(prev => [...prev, newMessage]);
+          setInput('');
+          setIsLoading(true);
+          
+          // Appel à l'API
+          fetch(`${API_URL}/agno_chat`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              message: question
+            }),
+          })
+          .then(response => {
+            if (!response.ok) {
+              throw new Error('Network response was not ok');
+            }
+            return response.json();
+          })
+          .then(data => {
+            let finalContent: string = '';
+            let finalActions: Action[] | undefined = undefined;
+            
+            // Traiter la réponse (même logique que handleSendMessage)
+            if (Array.isArray(data.actions) && data.actions.length > 0) {
+              finalContent = typeof data.response === 'string' ? data.response : JSON.stringify(data.response);
+              finalActions = data.actions;
+            }
+            else if (typeof data.response === 'string') {
+              try {
+                let potentialJsonString = data.response;
+                if (potentialJsonString.trim().startsWith('{') && potentialJsonString.trim().endsWith('}')) {
+                  potentialJsonString = potentialJsonString.replace(/'/g, '"');
+                  potentialJsonString = potentialJsonString.replace(/([a-zA-Z])"([a-zA-Z])/g, "$1'$2");
+                }
+                
+                const parsedInnerData = JSON.parse(potentialJsonString);
+                
+                if (parsedInnerData && typeof parsedInnerData.response === 'string') {
+                  finalContent = parsedInnerData.response;
+                  finalActions = Array.isArray(parsedInnerData.actions) ? parsedInnerData.actions : undefined;
+                } else {
+                  finalContent = data.response;
+                  finalActions = undefined;
+                }
+              } catch (e) {
+                finalContent = data.response;
+                finalActions = undefined;
+              }
+            }
+            else {
+              finalContent = data.response ? JSON.stringify(data.response) : '';
+              finalActions = undefined;
+            }
+            
+            // Créer le message de l'assistant
+            const assistantMessage: Message = {
+              role: 'assistant',
+              content: finalContent,
+              actions: Array.isArray(finalActions) ? finalActions.map((action: Action) => ({
+                type: action.type,
+                label: action.label,
+                url: action.url,
+                metadata: action.metadata
+              })) : undefined
+            };
+            
+            setMessages(prev => [...prev, assistantMessage]);
+          })
+          .catch(error => {
+            // Gérer l'erreur
+            const errorMessage: Message = {
+              role: 'assistant',
+              content: "Désolé, une erreur s'est produite lors de la communication avec le serveur."
+            };
+            setMessages(prev => [...prev, errorMessage]);
+          })
+          .finally(() => {
+            setIsLoading(false);
+          });
+        }, 100);
+      }
+    };
+    
+    // Écouter l'événement
+    document.addEventListener('floatingChatSubmit', handleFloatingChatSubmit as EventListener);
+    
+    return () => {
+      document.removeEventListener('floatingChatSubmit', handleFloatingChatSubmit as EventListener);
+    };
+  }, []);
+
+  // Récupérer le texte saisi dans le bouton flottant
+  useEffect(() => {
+    const floatingInput = localStorage.getItem('floatingChatInput');
+    const shouldOpenConversation = localStorage.getItem('openChatConversation');
+    
+    if (floatingInput) {
+      setInput(floatingInput);
+      localStorage.removeItem('floatingChatInput');
+      
+      // Focus sur le textarea
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+      
+      // Si on doit ouvrir le volet de conversation
+      if (shouldOpenConversation === 'true') {
+        localStorage.removeItem('openChatConversation');
+        setIsConversationOpen(true);
+        
+        // Envoyer automatiquement le message après un court délai
+        setTimeout(() => {
+          handleSendMessage();
+        }, 300);
+      }
+    }
+  }, []);
+
   // Gestion de l'enregistrement audio
   const startRecording = async () => {
     try {
@@ -540,7 +681,7 @@ export function ChatInput() {
   }, [messages, isLoading]);
 
   return (
-    <div className={`w-full mx-auto relative ${isMobile || isTablet ? 'mb-6 mt-6' : 'mb-12 mt-16'} transition-all duration-300 rounded-2xl ${isMobile || isTablet ? 'p-2' : 'p-6'} ${isConversationOpen && !isMobile && !isTablet ? 'conversation-container' : ''}`}>
+    <div className={`w-full mx-auto relative ${isMobile || isTablet ? 'mb-6 mt-6' : 'mb-12 mt-16'} transition-all duration-300 rounded-2xl ${isMobile || isTablet ? 'p-2' : 'p-6'} ${isConversationOpen && !isMobile && !isTablet ? 'conversation-container' : ''} chat-input-container`}>
       <div className={`${isMobile || isTablet ? 'max-w-full px-2' : 'max-w-3xl px-6'} mx-auto`}>
         {/* En-tête aligné à gauche */}
         <div className={`${isMobile || isTablet ? 'mb-4' : 'mb-10'} text-left`}>

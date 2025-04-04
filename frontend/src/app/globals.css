@@ -63,3 +63,58 @@ body.conversation-open {
   animation-delay: 0.4s;
 }
 
+/* Animation pour le bouton flottant */
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(184, 46, 175, 0.6); }
+  70% { box-shadow: 0 0 0 10px rgba(184, 46, 175, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(184, 46, 175, 0); }
+}
+
+.pulse-animation {
+  animation: pulse 2s infinite;
+}
+
+/* Style pour la barre de chat flottante */
+.floating-chat-bar {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.floating-chat-bar:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Animation d'apparition pour la barre de chat flottante */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.slide-up-animation {
+  animation: slideUp 0.3s ease forwards;
+}
+
+/* Animations pour la barre flottante contractée/expansée */
+.contracted-bar {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.expanded-bar {
+  transform: scale(1);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.contracted-bar:hover {
+  transform: scale(1);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
+}
+
