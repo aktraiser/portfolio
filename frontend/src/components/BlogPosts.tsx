@@ -32,8 +32,13 @@ declare global {
 }
 
 // Configuration Supabase sécurisée
-const supabaseUrl = 'https://dlthjkunkbehgpxhmgub.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRsdGhqa3Vua2JlaGdweGhtZ3ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI1Njg4MDQsImV4cCI6MjA1ODE0NDgwNH0.4p8FZ40t1szxEX2c9vdtKcLVx8jE155Ze636oD8hhKo';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// Stockage URL pour fallbacks d'images
+const getStorageUrl = () => {
+  return supabaseUrl ? `${supabaseUrl}/storage/v1/object/public` : '';
+};
 
 // Créer le client Supabase uniquement côté client
 let supabase: ReturnType<typeof createClient> | null = null;
@@ -184,7 +189,7 @@ export default function BlogPosts() {
 
   useEffect(() => {
     // Initialiser Supabase uniquement côté client
-    if (!supabase) {
+    if (!supabase && supabaseUrl && supabaseKey) {
       supabase = createClient(supabaseUrl, supabaseKey, {
         auth: { persistSession: false }
       });
@@ -192,7 +197,12 @@ export default function BlogPosts() {
     
     const fetchData = async () => {
       try {
-        if (!supabase) return;
+        if (!supabase) {
+          console.warn('Configuration Supabase manquante');
+          setLoading(false);
+          setError('Impossible de se connecter à la base de données. Veuillez réessayer plus tard.');
+          return;
+        }
         
         // Récupérer la vidéo
         const videoResult = await supabase
@@ -331,9 +341,9 @@ export default function BlogPosts() {
           } else {
             // Images par défaut si aucune URL n'a été récupérée
             setCarouselImages([
-              "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg",
-              "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg",
-              "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg"
+              `${getStorageUrl()}/image//banniere.jpg`,
+              `${getStorageUrl()}/image//banniere.jpg`,
+              `${getStorageUrl()}/image//banniere.jpg`
             ]);
           }
           
@@ -341,9 +351,9 @@ export default function BlogPosts() {
           console.warn("Aucune photo trouvée dans la base de données");
           // Définir des images par défaut pour le carrousel
           setCarouselImages([
-            "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg",
-            "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg", 
-            "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg"
+            `${getStorageUrl()}/image//banniere.jpg`,
+            `${getStorageUrl()}/image//banniere.jpg`, 
+            `${getStorageUrl()}/image//banniere.jpg`
           ]);
         }
         
@@ -390,14 +400,15 @@ export default function BlogPosts() {
           console.warn("Aucun article trouvé dans la base de données");
           // Définir un article par défaut
           setBlogArticle({
-            id: "1",
-            titre: "Comment l'IA peut transformer votre workflow créatif",
-            resume: "Découvrez comment les outils d'IA générative peuvent révolutionner votre processus créatif et booster votre productivité.",
-            contenu: "Contenu de l'article...",
+            id: '1',
+            titre: 'Comment l\'IA transforme le développement logiciel',
+            resume: 'Découvrez les dernières tendances en IA et leur impact sur le développement logiciel moderne.',
+            contenu: '# Intelligence Artificielle et Développement\n\nLes outils d\'IA révolutionnent notre façon de coder...',
             date_publication: new Date().toISOString(),
-            image_url: "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image/article-ia.jpg",
-            categories: ["IA Générative", "Productivité"],
-            auteur: "Lucas Bometon"
+            image_url: `${getStorageUrl()}/image/article-ia.jpg`,
+            categories: ['IA', 'Développement'],
+            auteur: 'Lucas B',
+            ordre: 1
           });
         }
         
@@ -798,11 +809,11 @@ export default function BlogPosts() {
                   <div className="relative h-full w-full overflow-hidden rounded-2xl">
                     {/* Image d'arrière-plan de l'article */}
                     <img 
-                      src={blogArticle?.image_url || "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image/article-ia.jpg"} 
+                      src={blogArticle?.image_url || `${getStorageUrl()}/image/article-ia.jpg`}
                       alt={blogArticle?.titre || "Article de blog"}
                       className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" 
                       onError={(e) => {
-                        e.currentTarget.src = "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image/banniere.jpg";
+                        e.currentTarget.src = `${getStorageUrl()}/image/banniere.jpg`;
                       }}
                     />
                     
@@ -1015,7 +1026,7 @@ export default function BlogPosts() {
                           }`}
                           onError={(e) => {
                             // Fallback si l'image n'existe pas
-                            e.currentTarget.src = "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg";
+                            e.currentTarget.src = `${getStorageUrl()}/image//banniere.jpg`;
                             e.currentTarget.onerror = null; // Éviter les boucles infinies
                           }}
                         />
@@ -1044,7 +1055,7 @@ export default function BlogPosts() {
                   <div className="w-full h-full min-h-[380px] group">
                     <div className="relative w-full h-full">
                       <img 
-                        src="https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image//banniere.jpg" 
+                        src={`${getStorageUrl()}/image//banniere.jpg`} 
                         alt="Développement" 
                         className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                       />
