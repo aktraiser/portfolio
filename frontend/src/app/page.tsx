@@ -4,6 +4,7 @@ import BlogPosts from '../components/BlogPosts';
 import Blog from '../components/Blog';
 import CTABanner from '../components/CTABanner';
 import Expertise from '../components/Expertise';
+import FloatingChatButton from '../components/FloatingChatButton';
 
 export default function Home() {
   return (
@@ -18,7 +19,8 @@ export default function Home() {
       <BlogPosts />
       <Blog />
 
-
+      {/* Bouton flottant qui apparaît quand le chat n'est plus visible */}
+      <FloatingChatButton />
     </div>
   );
 }
