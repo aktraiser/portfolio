@@ -190,7 +190,7 @@ export default function ArticlePage() {
               {article.categories && article.categories.length > 0 && (
                 <div className="mt-4">
                   {article.categories.map((category, index) => (
-                    <span key={index} className="inline-block bg-[#B82EAF]/30 text-white text-sm font-medium mr-2 px-3 py-1 rounded-md">
+                    <span key={index} className="inline-block bg-[#B82EAF]/60 text-white text-sm font-medium mr-2 px-3 py-1 rounded-md">
                       {category}
                     </span>
                   ))}

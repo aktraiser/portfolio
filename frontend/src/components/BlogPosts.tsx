@@ -99,6 +99,19 @@ interface Audio {
   created_at: string;
 }
 
+// Interface pour les articles de blog
+interface BlogArticle {
+  id: string;
+  titre: string;
+  resume: string;
+  contenu: string;
+  date_publication: string;
+  image_url?: string;
+  categories?: string[];
+  auteur?: string;
+  ordre?: number;
+}
+
 export default function BlogPosts() {
   const [video, setVideo] = useState<Video | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -113,6 +126,42 @@ export default function BlogPosts() {
   const [authModalType, setAuthModalType] = useState<'login' | 'request'>('login');
   const [currentCarouselIndex, setCurrentCarouselIndex] = useState(0);
   const [carouselImages, setCarouselImages] = useState<string[]>([]);
+  const [blogArticle, setBlogArticle] = useState<BlogArticle | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  
+  // Ajout d'un useEffect pour injecter les styles CSS pour la gestion de l'affichage du tweet
+  useEffect(() => {
+    // Créer une balise style
+    const styleEl = document.createElement('style');
+    styleEl.innerHTML = `
+      /* Par défaut sur mobile et tablette, masquer le tweet et afficher l'image */
+      @media (max-width: 768px) {
+        .tweet-container {
+          display: none !important;
+        }
+        .fallback-image-container {
+          display: block !important;
+        }
+      }
+      
+      /* Quand le chat est ouvert, masquer le tweet et afficher l'image */
+      body.conversation-open .tweet-container {
+        display: none !important;
+      }
+      
+      body.conversation-open .fallback-image-container {
+        display: block !important;
+      }
+    `;
+    
+    // Ajouter la balise style au head
+    document.head.appendChild(styleEl);
+    
+    // Nettoyer à la désinscription
+    return () => {
+      document.head.removeChild(styleEl);
+    };
+  }, []);
   
   const handleProjectClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -321,6 +370,37 @@ export default function BlogPosts() {
           console.warn("Aucun audio trouvé dans la base de données");
         }
         
+        // Récupérer un article de blog pour l'afficher en remplacement du tweet
+        const articleResult = await supabase
+          .from('articles')
+          .select('*')
+          .order('date_publication', { ascending: false })
+          .limit(1);
+        
+        console.log("Résultat de la requête articles:", articleResult);
+        
+        if (articleResult.error) {
+          console.error("Erreur lors de la récupération de l'article:", articleResult.error);
+        } else if (articleResult.data && articleResult.data.length > 0) {
+          // Conversion sécurisée
+          const typedArticle = (articleResult.data[0] as unknown) as BlogArticle;
+          console.log("Article récupéré:", typedArticle);
+          setBlogArticle(typedArticle);
+        } else {
+          console.warn("Aucun article trouvé dans la base de données");
+          // Définir un article par défaut
+          setBlogArticle({
+            id: "1",
+            titre: "Comment l'IA peut transformer votre workflow créatif",
+            resume: "Découvrez comment les outils d'IA générative peuvent révolutionner votre processus créatif et booster votre productivité.",
+            contenu: "Contenu de l'article...",
+            date_publication: new Date().toISOString(),
+            image_url: "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image/article-ia.jpg",
+            categories: ["IA Générative", "Productivité"],
+            auteur: "Lucas Bometon"
+          });
+        }
+        
         setLoading(false);
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Une erreur inconnue est survenue';
@@ -432,11 +512,25 @@ export default function BlogPosts() {
     return url.toLowerCase().endsWith('.mp4') || url.toLowerCase().endsWith('.webm');
   };
 
+  useEffect(() => {
+    // Écouter l'événement de changement d'état de la conversation
+    const handleConversationStateChange = (event: CustomEvent) => {
+      const { isOpen } = event.detail;
+      setIsChatOpen(isOpen);
+    };
+    
+    document.addEventListener('conversationStateChanged', handleConversationStateChange as EventListener);
+    
+    return () => {
+      document.removeEventListener('conversationStateChanged', handleConversationStateChange as EventListener);
+    };
+  }, []);
+
   return (
     <div className="bg-black py-8 sm:py-14">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         {/* Lien vers la page des projets */}
-        <div className="flex justify-end mb-6">
+        <div className="flex justify-end mb-4">
           <button 
             onClick={handleProjectClick}
             className="text-white font-medium flex items-center relative group"
@@ -458,16 +552,16 @@ export default function BlogPosts() {
           </button>
         </div>
         
-        <div className="grid grid-cols-1 gap-8 mx-auto max-w-2xl lg:mx-0 lg:max-w-none lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 w-full lg:grid-cols-3">
           {/* Projet principal (plus grand) */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 w-full">
             {loading ? (
-              <div className="bg-[#252339] rounded-2xl h-[400px] flex items-center justify-center">
+              <div className="bg-[#252339] rounded-2xl h-[700px] flex items-center justify-center w-full">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
               </div>
             ) : projects.length > 0 ? (
             <article
-              className="relative isolate flex flex-col justify-end overflow-hidden rounded-2xl bg-gray-900 px-8 pb-8 pt-80 sm:pt-48 lg:pt-80 h-full cursor-pointer group"
+              className="w-full relative isolate flex flex-col justify-end overflow-hidden rounded-2xl bg-gray-900 px-8 pb-8 pt-96 sm:pt-64 lg:pt-96 h-full cursor-pointer group"
               aria-labelledby="project-title-1"
               onClick={handleProjectClick}
               role="button"
@@ -516,22 +610,22 @@ export default function BlogPosts() {
               </div>
             </article>
             ) : (
-              <div className="bg-gray-900 rounded-2xl h-[400px] flex items-center justify-center text-gray-400">
+              <div className="bg-gray-900 rounded-2xl h-[500px] flex items-center justify-center text-gray-400 w-full">
                 Aucun projet disponible
               </div>
             )}
           </div>
 
           {/* Colonne de droite avec un second projet et une vidéo */}
-          <div className="lg:col-span-1 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="w-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
             {/* Second projet */}
             {loading ? (
-              <div className="bg-gray-900 rounded-2xl h-[240px] flex items-center justify-center">
+              <div className="bg-gray-900 rounded-2xl h-[240px] flex items-center justify-center w-full">
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
               </div>
             ) : projects.length > 1 ? (
               <article
-                className="relative isolate flex flex-col justify-end overflow-hidden rounded-2xl bg-gray-900 px-8 pb-8 pt-40 sm:pt-48 lg:pt-40 cursor-pointer group"
+                className="w-full relative isolate flex flex-col justify-end overflow-hidden rounded-2xl bg-gray-900 px-8 pb-8 pt-40 sm:pt-48 lg:pt-40 cursor-pointer group"
                 aria-labelledby="project-title-2"
                 onClick={handleProjectClick}
                 role="button"
@@ -577,14 +671,14 @@ export default function BlogPosts() {
                 </div>
               </article>
             ) : (
-              <div className="bg-gray-900 rounded-2xl h-[240px] flex items-center justify-center text-gray-400">
+              <div className="bg-gray-900 rounded-2xl h-[240px] flex items-center justify-center text-gray-400 w-full">
                 Aucun projet supplémentaire disponible
               </div>
             )}
             
             {/* Section vidéo */}
             <div 
-              className="relative isolate flex flex-col justify-end overflow-hidden rounded-2xl bg-gray-900 aspect-video group"
+              className="w-full relative isolate flex flex-col justify-end overflow-hidden rounded-2xl bg-gray-900 px-8 pb-8 pt-40 sm:pt-48 lg:pt-40 cursor-pointer group"
             >
               {loading ? (
                 <div className="absolute inset-0 flex items-center justify-center text-gray-400">
@@ -621,7 +715,7 @@ export default function BlogPosts() {
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-[#252339] via-[#252339]/40" role="presentation" />
                   <div className="absolute inset-0 rounded-2xl ring-1 ring-inset ring-gray-900/10" role="presentation" />
-                  <div className="absolute inset-0 p-6 flex flex-col justify-end">
+                  <div className="absolute inset-0 px-8 pb-8 flex flex-col justify-end">
                     <h3 className="text-lg/6 font-semibold text-white">{video.name}</h3>
                     <p className="text-sm text-gray-300">IA generative video</p>
                   </div>
@@ -645,9 +739,10 @@ export default function BlogPosts() {
         {/* Section Twitter/X */}
         <div className="mt-8">
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-            {/* Tweet spécifique - à gauche */}
-            <div className="bg-[#252339] rounded-2xl overflow-hidden">
-              <div className="p-6">
+            {/* Tweet spécifique - à gauche (masqué sur mobile ou quand le chat est ouvert) */}
+            <div className="bg-[#252339] rounded-2xl overflow-hidden relative">
+              {/* Conteneur Twitter qui sera masqué sur petits écrans */}
+              <div className="p-6 tweet-container">
                 {/* Embed Twitter API */}
                 <div className="twitter-embed">
                   {twitterLoaded && tweet ? (
@@ -664,11 +759,11 @@ export default function BlogPosts() {
                         <>
                           <div className="flex items-start mb-4">
                             <div className="rounded-full bg-gray-700 w-12 h-12 mr-3 flex-shrink-0"></div>
-                            <div>
-                              <div className="text-gray-400">@{tweet.author_handle}</div>
+                            <div className="min-w-0">
+                              <div className="text-gray-400 break-words">@{tweet.author_handle}</div>
                             </div>
                           </div>
-                          <p className="text-white mb-3">{tweet.content || "Ce contenu n'est pas disponible pour le moment."}</p>
+                          <p className="text-white mb-3 whitespace-normal break-words">{tweet.content || "Ce contenu n'est pas disponible pour le moment."}</p>
                           <div className="text-gray-400 text-sm">
                             {new Date(tweet.created_at).toLocaleString('fr-FR', {
                               hour: '2-digit',
@@ -692,6 +787,75 @@ export default function BlogPosts() {
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* Article de blog qui s'affiche quand le tweet est masqué */}
+              <div className="absolute inset-0 fallback-image-container hidden">
+                <Link 
+                  href={`/blog/${blogArticle?.id || '1'}`}
+                  className="block h-full w-full group"
+                >
+                  <div className="relative h-full w-full overflow-hidden rounded-2xl">
+                    {/* Image d'arrière-plan de l'article */}
+                    <img 
+                      src={blogArticle?.image_url || "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image/article-ia.jpg"} 
+                      alt={blogArticle?.titre || "Article de blog"}
+                      className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-110" 
+                      onError={(e) => {
+                        e.currentTarget.src = "https://dlthjkunkbehgpxhmgub.supabase.co/storage/v1/object/public/image/banniere.jpg";
+                      }}
+                    />
+                    
+                    {/* Overlay gradient pour la lisibilité */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent"></div>
+                    
+                    {/* Contenu de l'article */}
+                    <div className="absolute inset-0 flex flex-col justify-end p-6">
+                      <div className="space-y-3">
+                        {/* Tags/Catégories */}
+                        <div className="flex flex-wrap gap-2">
+                          {blogArticle?.categories ? (
+                            blogArticle.categories.map((category, index) => (
+                              <span key={index} className="inline-block bg-[#B82EAF]/30 text-white text-xs font-medium px-2.5 py-0.5 rounded">
+                                {category}
+                              </span>
+                            ))
+                          ) : (
+                            <>
+                              <span className="inline-block bg-[#B82EAF]/30 text-white text-xs font-medium px-2.5 py-0.5 rounded">
+                                IA Générative
+                              </span>
+                              <span className="inline-block bg-[#B82EAF]/30 text-white text-xs font-medium px-2.5 py-0.5 rounded">
+                                Productivité
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        
+                        {/* Titre */}
+                        <h3 className="text-xl font-bold text-white line-clamp-2">
+                          {blogArticle?.titre || "Comment l'IA peut transformer votre workflow créatif"}
+                        </h3>
+                        
+                        {/* Date */}
+                        <div className="text-sm text-gray-300">
+                          {blogArticle?.date_publication 
+                            ? new Date(blogArticle.date_publication).toLocaleDateString('fr-FR', { 
+                                year: 'numeric', 
+                                month: 'long', 
+                                day: 'numeric' 
+                              })
+                            : new Date().toLocaleDateString('fr-FR', { 
+                                year: 'numeric', 
+                                month: 'long', 
+                                day: 'numeric' 
+                              })
+                          }
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
               </div>
             </div>
             
@@ -784,40 +948,40 @@ export default function BlogPosts() {
                   </div>
                 ) : repo ? (
                   <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div className="flex items-center mb-3">
-                      <svg className="h-6 w-6 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true" role="presentation">
+                    <div className="flex items-center mb-3 flex-wrap">
+                      <svg className="h-6 w-6 text-gray-400 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true" role="presentation">
                         <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.343-3.369-1.343-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.268 2.75 1.026A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.337 1.909-1.294 2.747-1.026 2.747-1.026.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.841-2.337 4.687-4.565 4.934.359.31.678.92.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.416 22 12c0-5.523-4.477-10-10-10z" />
                       </svg>
                       <a 
                         href={repo.repo_url}
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="text-blue-400 hover:text-blue-300 hover:underline"
+                        className="text-blue-400 hover:text-blue-300 hover:underline break-words"
                         aria-label={`Voir le dépôt GitHub ${repo.name}`}
                       >
                         {repo.name}
                       </a>
                     </div>
-                    <p className="text-gray-300 mb-4 text-sm">{repo.description}</p>
-                    <div className="flex items-center text-sm text-gray-400">
+                    <p className="text-gray-300 mb-4 text-sm whitespace-normal break-words line-clamp-3 overflow-wrap-anywhere">{repo.description}</p>
+                    <div className="flex items-center text-sm text-gray-400 flex-wrap gap-y-2">
                       <div className="mr-4 flex items-center">
-                        <span className="inline-block w-3 h-3 rounded-full bg-blue-500 mr-1"></span>
-                        {repo.language}
+                        <span className="inline-block w-3 h-3 rounded-full bg-blue-500 mr-1 flex-shrink-0"></span>
+                        <span className="whitespace-nowrap">{repo.language}</span>
                       </div>
                       {repo.stars !== undefined && (
                         <div className="flex items-center mr-4">
-                          <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" role="presentation">
+                          <svg className="h-4 w-4 mr-1 flex-shrink-0" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" role="presentation">
                             <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/>
                           </svg>
-                          <span>{repo.stars} étoiles</span>
+                          <span className="whitespace-nowrap">{repo.stars} étoiles</span>
                         </div>
                       )}
                       {repo.forks !== undefined && (
                         <div className="flex items-center">
-                          <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" role="presentation">
+                          <svg className="h-4 w-4 mr-1 flex-shrink-0" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" role="presentation">
                             <path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Zm6.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm-3 8.75a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"/>
                           </svg>
-                          <span>{repo.forks} forks</span>
+                          <span className="whitespace-nowrap">{repo.forks} forks</span>
                         </div>
                       )}
                     </div>
@@ -830,8 +994,8 @@ export default function BlogPosts() {
               </div>
             </div>
             
-            {/* Troisième card avec une image */}
-            <div className="grid grid-cols-1 gap-6">
+            {/* Troisième card avec l'image et la card HuggingFace dans une même colonne sur desktop */}
+            <div className="sm:col-span-2 lg:col-span-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-6">
               {/* Image IA Diffusion - Carrousel */}
               <div className="bg-gray-900 rounded-2xl overflow-hidden" style={{ minHeight: '280px' }}>
                 {loading ? (
@@ -895,10 +1059,10 @@ export default function BlogPosts() {
               </div>
               
               {/* HuggingFace Model Card */}
-              <div className="bg-[#252339] rounded-2xl overflow-hidden p-6">
+              <div className="bg-[#252339] rounded-2xl overflow-hidden p-6 w-full">
                 <div className="border bg-gray-900 border-gray-800 rounded-lg p-4">
-                  <div className="flex items-center mb-3">
-                    <div className="bg-[#FFD21E] rounded-md p-1 mr-2">
+                  <div className="flex items-center mb-3 flex-wrap">
+                    <div className="bg-[#FFD21E] rounded-md p-1 mr-2 flex-shrink-0">
                       <svg width="16" height="16" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="presentation">
                         <path d="M39 96C45.6274 96 51 90.6274 51 84C51 77.3726 45.6274 72 39 72C32.3726 72 27 77.3726 27 84C27 90.6274 32.3726 96 39 96Z" fill="#231F20"/>
                         <path d="M81 96C87.6274 96 93 90.6274 93 84C93 77.3726 87.6274 72 81 72C74.3726 72 69 77.3726 69 84C69 90.6274 74.3726 96 81 96Z" fill="#231F20"/>
@@ -910,29 +1074,29 @@ export default function BlogPosts() {
                       href="https://huggingface.co/Aktraiser/Deepseek_comptable" 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="text-blue-400 hover:text-blue-300 hover:underline"
+                      className="text-blue-400 hover:text-blue-300 hover:underline break-words"
                       aria-label="Voir le modèle Deepseek_comptable sur Hugging Face"
                     >
                       Deepseek_comptable
                     </a>
                   </div>
-                  <p className="text-gray-300 mb-14 text-sm">Un modèle de langage spécialisé pour l'expertise comptable (DeepSeek-Llama-70B)</p>
-                  <div className="flex items-center text-sm text-gray-400">
+                  <p className="text-gray-300 mb-14 text-sm whitespace-normal break-words line-clamp-3 min-h-[3em]">Un modèle de langage spécialisé pour l'expertise comptable (DeepSeek-Llama-70B)</p>
+                  <div className="flex items-center text-sm text-gray-400 flex-wrap gap-y-2">
                     <div className="mr-4 flex items-center">
-                      <span className="inline-block w-3 h-3 rounded-full bg-yellow-500 mr-1"></span>
-                      French
+                      <span className="inline-block w-3 h-3 rounded-full bg-yellow-500 mr-1 flex-shrink-0"></span>
+                      <span className="whitespace-nowrap">French</span>
                     </div>
                     <div className="flex items-center mr-4">
-                      <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" role="presentation">
+                      <svg className="h-4 w-4 mr-1 flex-shrink-0" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" role="presentation">
                         <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25z"/>
                       </svg>
-                      <span>Apache 2.0</span>
+                      <span className="whitespace-nowrap">Apache 2.0</span>
                     </div>
                     <div className="flex items-center">
-                      <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true" role="presentation">
+                      <svg className="h-4 w-4 mr-1 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true" role="presentation">
                         <path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a2 2 0 012 2v1a2 2 0 01-2 2H9a2 2 0 01-2-2v-1a2 2 0 012-2h2V6.477L8.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 017 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L11 4.323V3a1 1 0 011-1z" />
                       </svg>
-                      <span>70B params</span>
+                      <span className="whitespace-nowrap">70B params</span>
                     </div>
                   </div>
                 </div>

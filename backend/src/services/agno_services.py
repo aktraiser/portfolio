@@ -19,7 +19,7 @@ from agno.team import Team
 from agno.vectordb.pgvector import PgVector, SearchType
 from pathlib import Path
 from supabase import create_client, Client
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import List, Optional
 try:
     from agno.memory.db.postgres import PgMemoryDb
@@ -30,13 +30,33 @@ except ImportError:
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.storage.agent.sqlite import SqliteAgentStorage
 
+# Fonction utilitaire pour masquer les informations sensibles dans les logs
+def mask_sensitive_data(text, max_length=50):
+    """Masque les données sensibles et tronque les textes longs pour les logs"""
+    if text is None:
+        return "None"
+        
+    if not isinstance(text, str):
+        text = str(text)
+        
+    # Tronquer les messages longs
+    if len(text) > max_length:
+        return text[:max_length] + "..." 
+    
+    return text
+
+# Configuration du niveau de logging global
+log_level = os.getenv("LOG_LEVEL", "INFO")
+# Utiliser un niveau moins verbeux pour les logs moins importants
+log_level_detail = "INFO" if log_level == "DEBUG" else "WARNING"
+
 # Définition d'une classe simple pour remplacer MemoryVector
 class MemoryVector:
     """Implémentation locale simplifiée pour remplacer agno.vectordb.memory.MemoryVector"""
     
     def __init__(self, *args, **kwargs):
         self.memories = []
-        logger.info("Initialisation de MemoryVector local")
+        logger.debug("Initialisation de MemoryVector local")
     
     def add(self, text, metadata=None):
         self.memories.append({"text": text, "metadata": metadata or {}})
@@ -295,12 +315,19 @@ class PortfolioTeamService:
                 "- Questions sur Lucas Bometon et son parcours -> Presentation Agent",
                 "- Questions FACTUELLES sur projets/réalisations -> Project Agent",
                 "- Demandes commerciales/projets/accompagnement -> Commercial Agent",
-                "- Questions techniques/information -> Info Agent",
+                "- Questions techniques sur l'IA/UX/agentic IA/générative IA/définitions -> Info Agent",
+                "- Questions demandant des définitions d'IA agentique/générative -> Info Agent",
                 "- Questions générales -> General Agent",
                 "Pour une conversation commerciale:",
                 "- Maintenir la conversation avec Commercial Agent",
                 "- Assurer la continuité de la qualification du projet",
                 "- Ne pas interrompre le processus commercial",
+                "IMPORTANT: Pour les questions hors sujet (non liées à Lucas, ses services, son expertise, intelligence artificielle, IA, LLM, Agentic IA, Agent, Fine-tuning, générative IA et UX):",
+                "- Déterminer si la question est hors domaine (astronomie, géographie, histoire, etc.)",
+                "- Si hors domaine, diriger vers General Agent avec tag [HORS_SUJET]",
+                "Pour les définitions techniques (agentic IA, IA générative, etc.):",
+                "- Diriger systématiquement vers Info Agent",
+                "- Ne jamais diriger vers General Agent les questions techniques",
                 "Toujours retourner uniquement la réponse de l'agent sélectionné, sans commentaire additionnel."
             ],
             enable_agentic_context=True,
@@ -442,21 +469,28 @@ class PortfolioTeamService:
         # 4. Agent d'information technique
         info_agent = BaseAgentBuilder.create_agent(
             name="Info Agent",
-            role="Expert technique pour les renseignements sur l'expertise de Lucas",
+            role="Expert technique pour les renseignements sur l'expertise de Lucas et les technologies IA",
             system_prompt="""
             Tu es spécialisé dans l'explication des domaines d'expertise de Lucas Bometon.
             Tu fournis des informations précises sur AI Design, l'IA Générative, l'agentic IA et l'expérience utilisateur.
             Tu réponds aux questions techniques et professionnelles.
-            Utilise la base de connaissances pour des explications approfondies.
-            IMPORTANT: Sois clair et concis. Maximum 3, phrases.
+            
+            IMPORTANT:
+            - Tu es un expert des technologies IA comme les LLM, l'IA générative et l'IA agentique
+            - Tu connais parfaitement ce qu'est l'IA agentique (agentic IA): systèmes IA autonomes qui peuvent planifier,
+              raisonner, et exécuter des tâches pour atteindre des objectifs définis, en prenant des décisions sans intervention humaine.
+            - Tu sais que l'IA générative est un type d'IA qui crée de nouveaux contenus (texte, images, son) 
+              basés sur ce qu'elle a appris à partir de vastes ensembles de données.
+            - Définis ces concepts avec précision lorsqu'on te les demande
+            - Sois clair et concis. Maximum 3 phrases pour les réponses standard, 5 phrases pour les définitions techniques.
             """,
             instructions=[
                 "Fournis des informations précises et détaillées, adaptées à la question",
-                "Explique clairement les concepts techniques",
+                "Définis clairement les concepts techniques d'IA et de UX lorsqu'on te les demande",
+                "Explique ce qu'est l'IA agentique et l'IA générative avec précision",
                 "N'évite aucun sujet technique relevant de l'expertise de Lucas",
                 "Réponds en français uniquement",
                 "Sois concis, maximum 5 phrases",
-                "Invite à prendre rendez-vous avec Lucas",
                 "Utilise la base de connaissances pour des informations à jour"
             ],
             with_web_search=True,
@@ -467,16 +501,30 @@ class PortfolioTeamService:
         # 5. Agent général (pour les questions générales)
         general_agent = BaseAgentBuilder.create_agent(
             name="General Agent",
-            role="Assistant général pour le portfolio de Lucas Bometon",
+            role="Expert en IA, UX et concepts techniques pour le portfolio de Lucas Bometon",
             system_prompt="""
             Tu es l'assistant principal du portfolio de Lucas Bometon.
-            Tu peux répondre à des questions générales ou rediriger vers les agents spécialisés.
-            Utilise la base de connaissances pour des informations générales sur Lucas.
-            IMPORTANT: Sois toujours concis. Maximum 3 phrases.
+            Tu peux répondre à des questions générales, techniques et sur l'expertise de Lucas.
+            Tu es expert en IA (Intelligence Artificielle), IA générative, agents IA (agentic IA),
+            et expérience utilisateur (UX).
+            Utilise la base de connaissances pour des informations générales et techniques.
+            
+            IMPORTANT: 
+            - Pour les questions sur l'IA, les LLM, l'IA agentique (agentic IA) et l'UX, réponds avec précision et pertinence.
+            - Pour les questions hors sujet (marquées [HORS_SUJET]), explique poliment que tu es 
+              spécialisé sur Lucas Bometon, son expertise en IA Design et UX, et ses services.
+            - Propose de rediriger la conversation vers ces sujets.
+            - Format pour les questions hors sujet: "Je suis l'assistant de Lucas Bometon, spécialisé en IA Design et expérience utilisateur. 
+              Votre question sur [sujet] sort de mon domaine d'expertise. Puis-je vous aider sur des sujets liés 
+              à l'IA, l'UX, ou les projets de Lucas?"
+            - Pour les définitions d'IA agentique/générative: donne une définition précise et complète en 2-3 phrases.
+            - Sois toujours concis. Maximum 3 phrases.
             """,
             instructions=[
                 "Réponds aux questions générales sur Lucas et son portfolio",
-                "Pour les questions très spécifiques, indique que tu vas consulter un spécialiste",
+                "Explique clairement les concepts techniques liés à l'IA et l'UX",
+                "Pour les questions sur l'IA agentique, LLM, etc., donne des définitions précises",
+                "Pour les questions hors sujet, propose poliment de revenir au domaine d'expertise de Lucas",
                 "Réponds en français uniquement",
                 "Sois très concis, maximum 3 phrases",
                 "Utilise la base de connaissances pour des réponses précises"
@@ -548,6 +596,12 @@ class PortfolioTeamService:
             else:
                 content = str(response)
             
+            # Log limité pour le débogage, sans exposer le contenu complet
+            logging.debug(f"Nettoyage réponse: {len(content)} caractères")
+            
+            # IMPORTANT: Vérifier si la réponse est vide ou juste une invitation à prendre rendez-vous
+            is_empty_or_invite = "prendre rendez-vous" in content.lower() and len(content.split()) < 15
+            
             # Nettoyer les marqueurs de coordination
             content = content.replace("Je vais transmettre", "")
             content = content.replace("Je transmets", "")
@@ -567,34 +621,27 @@ class PortfolioTeamService:
             # On fait cela AVANT le nettoyage du lien Calendly pour que le nettoyage s'applique aussi
             # au texte potentiellement extrait du JSON.
             potential_json_content = content # Garde une copie pour le nettoyage final
+            
             if isinstance(content, str) and content.startswith("{"):
                 try:
                     # Essayer de parser la chaîne comme JSON
                     parsed = json.loads(content.replace("'", "\"")) # Tentative de correction des apostrophes
                     if isinstance(parsed, dict) and "response" in parsed:
                         content = parsed["response"]
-                        logging.info("✅ Contenu extrait d'une chaîne JSON interne")
+                        logging.debug("✅ Contenu extrait d'une chaîne JSON interne")
                     else:
                         content = potential_json_content # Retour au contenu original si pas de champ 'response'
                 except json.JSONDecodeError:
                     # Si le parsing échoue, on continue avec le contenu original
                     content = potential_json_content
-                    logging.warning("⚠️ Échec du parsing JSON dans _clean_response, utilisation du contenu brut.")
+                    logging.debug("⚠️ Échec du parsing JSON dans _clean_response")
                 except Exception as e:
                     content = potential_json_content
-                    logging.error(f"❌ Erreur inattendue lors du parsing JSON dans _clean_response: {str(e)}")
+                    logging.error(f"❌ Erreur JSON dans _clean_response: {type(e).__name__}")
+                    logging.debug(f"Détail de l'erreur JSON: {str(e)}")
             
             # Supprimer spécifiquement les liens Markdown Calendly de la réponse textuelle
             import re
-            # Regex pour trouver [texte](URL calendly), même sur plusieurs lignes
-            # - \[: Marque le début du texte du lien
-            # - ([^]]+): Capture le texte du lien (tout sauf ']')
-            # - \]: Marque la fin du texte du lien
-            # - \(: Marque le début de l'URL
-            # - (https?:\/\/calendly\.com[^)]+): Capture l'URL Calendly
-            # - \): Marque la fin de l'URL
-            # - (?<=\s?): S'assure qu'il y a éventuellement un espace avant le lien
-            # Le re.DOTALL permet au '.' de matcher aussi les nouvelles lignes
             cleaned_content = re.sub(r"\s?\[[^]]+\]\((https?://calendly\.com[^)]+)\)", "", content, flags=re.DOTALL)
             
             # Supprimer les phrases ou bouts de phrases résiduelles qui invitaient à cliquer
@@ -616,29 +663,101 @@ class PortfolioTeamService:
             cleaned_content = re.sub(r"\s+([?.!,:])", r"\1", cleaned_content)
             cleaned_content = cleaned_content.replace("  ", " ").strip()
             
-            # Si le nettoyage a rendu la réponse vide ou quasi vide, mettre une réponse générique
-            if not cleaned_content or len(cleaned_content) < 10:
-                 logging.warning(f"⚠️ Réponse vide après nettoyage du lien Calendly. Contenu original: {content}")
-                 # On pourrait choisir de garder le bouton seul ou mettre une phrase générique
-                 cleaned_content = "Je vous invite à prendre rendez-vous pour discuter de votre projet."
+            # NOUVEAU: Corriger les guillemets au début et à la fin
+            # Utiliser un regex pour supprimer les guillemets simples ou doubles au début et à la fin
+            cleaned_content = re.sub(r'^["\']\s*', '', cleaned_content)  # Guillemets au début
+            cleaned_content = re.sub(r'\s*["\']$', '', cleaned_content)  # Guillemets à la fin
+            
+            # NOUVEAU: Corriger les points isolés à la fin
+            cleaned_content = re.sub(r'\s+\.\s*$', '', cleaned_content)  # Point à la fin
+            
+            # AJOUT: Limiter la réponse à 3 phrases maximum
+            phrases = re.split(r'(?<=[.!?])\s+', cleaned_content)
+            if len(phrases) > 3:
+                cleaned_content = ' '.join(phrases[:3])
+                logging.debug(f"✂️ Réponse tronquée à 3 phrases (originale: {len(phrases)} phrases)")
+            
+            # Si le nettoyage a rendu la réponse vide ou quasi vide ou juste une invitation à prendre rendez-vous
+            if not cleaned_content or len(cleaned_content) < 10 or is_empty_or_invite or "rendez-vous" in cleaned_content.lower():
+                logging.warning(f"⚠️ Réponse vide ou invitation après nettoyage")
+                
+                # Tenter de fournir une définition si la requête originale concerne un sujet technique
+                tech_definition = self._get_technical_definition_if_needed(content)
+                if tech_definition:
+                    logging.info("✅ Définition technique fournie comme fallback")
+                    return tech_definition
+                
+                # Si pas de définition technique, utiliser la réponse générique
+                cleaned_content = "Je vous invite à prendre rendez-vous pour discuter de votre projet."
 
             return cleaned_content
             
         except Exception as e:
-            logging.error(f"Erreur nettoyage réponse: {str(e)}")
+            logging.error(f"Erreur nettoyage réponse: {type(e).__name__}")
+            logging.debug(f"Détail erreur nettoyage: {str(e)}")
             return str(response)
-
+            
+    def _get_technical_definition_if_needed(self, original_query_or_response):
+        """
+        Vérifie si la requête ou réponse concerne un sujet technique et fournit une définition appropriée
+        
+        Args:
+            original_query_or_response: La requête originale ou la réponse avant nettoyage
+            
+        Returns:
+            str: Une définition technique si pertinente, None sinon
+        """
+        # Normaliser le texte
+        normalized_text = original_query_or_response.lower()
+        
+        # Vérifier si c'est une demande de définition
+        is_definition_query = any(term in normalized_text for term in 
+                                 ["qu'est-ce que", "qu'est ce que", "c'est quoi", "définir", 
+                                  "défini", "définition", "explique", "expliquer"])
+        
+        # Vérifier les sujets techniques potentiels
+        if "agentic ia" in normalized_text or "ia agentique" in normalized_text or "agnetic" in normalized_text:
+            return """L'IA agentique (agentic AI), domaine d'expertise clé de Lucas Bometon, désigne des systèmes IA autonomes capables de planifier, raisonner et exécuter des tâches pour atteindre des objectifs définis. Dans ses projets, Lucas combine cette technologie avec l'UX design pour créer des interfaces utilisateur qui tirent parti de ces agents intelligents tout en restant intuitives et centrées sur l'humain. Son approche unique permet de développer des systèmes d'IA agentique réellement utiles et accessibles."""
+            
+        elif "agent" in normalized_text or "agnt" in normalized_text:
+            return """Les agents IA, au cœur de l'expertise de Lucas Bometon, sont des systèmes autonomes qui perçoivent leur environnement, prennent des décisions et agissent pour atteindre des objectifs spécifiques. Lucas se spécialise dans la conception de ces agents en mettant l'accent sur l'équilibre entre autonomie et contrôle utilisateur, notamment à travers des équipes d'agents spécialisés pour résoudre des problèmes complexes. Son portfolio inclut plusieurs projets d'agents collaboratifs augmentés par une UX rigoureuse."""
+            
+        elif "générative" in normalized_text or "génératif" in normalized_text or "génération" in normalized_text:
+            return """L'IA générative, un des domaines d'expertise de Lucas Bometon, crée du contenu original (texte, images, audio) en apprenant des modèles à partir de vastes ensembles de données. Lucas se distingue par sa capacité à intégrer ces technologies dans des expériences utilisateur fluides et intuitives, en concevant des interfaces qui rendent l'IA générative accessible aux utilisateurs finaux. Son approche combine la puissance des LLM avec une conception UX centrée sur les besoins utilisateurs réels."""
+            
+        elif is_definition_query and ("ia" in normalized_text or "intelligence artificielle" in normalized_text):
+            return """L'intelligence artificielle (IA) est au cœur de l'expertise de Lucas Bometon, qui se spécialise dans la conception d'expériences IA centrées sur l'humain. Sa vision unique combine la puissance des systèmes d'IA avec une conception UX rigoureuse, notamment dans les domaines de l'IA agentique et générative. Lucas a développé une méthodologie permettant d'intégrer ces technologies complexes dans des interfaces intuitives et accessibles, tout en respectant les principes éthiques et l'utilisabilité."""
+            
+        # Pas de sujet technique identifié
+        return None
+        
     async def generate_response(self, query: str, context: str = "", metadata=None) -> dict:
         """Génère une réponse en utilisant l'équipe d'agents Agno"""
         try:
-            # Log de la requête
-            logging.info(f"🤖 Nouvelle requête: '{query}'")
+            # Log de la requête (masquée pour protéger la vie privée)
+            masked_query = mask_sensitive_data(query)
+            logging.debug(f"🤖 Nouvelle requête: '{masked_query}'")
+            
+            # Vérifier si c'est une question technique sur l'IA agentique/agents/IA générative directement
+            tech_definition = self._check_for_direct_technical_query(query)
+            if tech_definition:
+                logging.info("Question technique détectée - réponse fournie directement")
+                return {
+                    "response": tech_definition,
+                    "actions": []
+                }
+            
+            # Vérifier si la question est hors sujet
+            if self._is_off_topic_question(query):
+                logging.info("Question détectée comme hors sujet")
+                query = f"[HORS_SUJET] {query}"
             
             # Gérer les metadata pour la session_id si spécifiée
             session_id = None
             if metadata and isinstance(metadata, dict) and "session_id" in metadata:
                 session_id = metadata["session_id"]
-                logging.info(f"Session ID fournie: {session_id}")
+                # Masquer la session_id complète dans les logs
+                logging.debug(f"Session ID fournie: {session_id[:8] if session_id else 'None'}...")
             
             # Déterminer quel agent sera utilisé en fonction du préfixe de la requête
             target_agent = None
@@ -648,15 +767,24 @@ class PortfolioTeamService:
             if session_id:
                 commercial_agent = next((agent for agent in self.agents if agent.name == "Commercial Agent"), None)
                 if commercial_agent:
+                    # CORRECTION: S'assurer que la session_id est toujours définie
                     commercial_agent.session_id = session_id
+                    logging.info(f"Session ID attribuée à l'agent commercial: {session_id[:8] if session_id else 'None'}")
+                    
                     try:
+                        # DÉBOGAGE: Vérifier la mémoire de l'agent
                         if hasattr(commercial_agent, 'memory') and commercial_agent.memory:
-                            if commercial_agent.memory.messages and len(commercial_agent.memory.messages) > 0:
+                            # Afficher les informations de débogage sur la mémoire
+                            msg_count = len(commercial_agent.memory.messages) if hasattr(commercial_agent.memory, 'messages') else 0
+                            logging.info(f"Mémoire de l'agent commercial - Messages: {msg_count}")
+                            
+                            if msg_count > 0 or "commercial" in query.lower() or "projet" in query.lower():
                                 commercial_conversation = True
                                 target_agent = commercial_agent
-                                logging.info(f"Session commerciale active: {session_id}")
+                                logging.info(f"Session commerciale active: {session_id[:8] if session_id else 'None'}")
                     except Exception as e:
-                        logging.error(f"Erreur mémoire: {str(e)}")
+                        logging.error(f"Erreur mémoire: {type(e).__name__}")
+                        logging.debug(f"Détail erreur mémoire: {str(e)}")
             
             # Détection d'une conversation commerciale
             if query.startswith("[COMMERCIAL]") or "COMMERCIAL" in query or "projet" in query.lower() or "rdv" in query.lower():
@@ -668,17 +796,43 @@ class PortfolioTeamService:
                 query = f"[COMMERCIAL] {query}"
                 if not query.endswith("QUALIFICATION DE PROJET"):
                     query += " - QUALIFICATION DE PROJET"
+                
+                # CORRECTION: Forcer l'utilisation de l'agent commercial
+                target_agent = next((agent for agent in self.agents if agent.name == "Commercial Agent"), None)
+                if target_agent and session_id:
+                    target_agent.session_id = session_id
+                    logging.info(f"Agent commercial forcé avec session: {session_id[:8] if session_id else 'None'}")
+            
+            # Log info basique (sans exposer le contenu complet)
+            conversation_type = "commerciale" if commercial_conversation else "standard"
+            logging.info(f"Traitement d'une conversation {conversation_type}")
             
             # Préparer la question avec le contexte
             final_query = query
             if context:
+                logging.debug(f"Contexte ajouté: {len(context)} caractères")
                 final_query = f"{context}\n\nQuestion: {query}"
             
             # Obtenir la réponse de l'équipe
             response = await self.team.arun(final_query)
             
+            # S'assurer que la session est préservée pour l'agent commercial
+            commercial_agent = next((agent for agent in self.agents if agent.name == "Commercial Agent"), None)
+            if commercial_agent and commercial_conversation:
+                current_session_id = commercial_agent.session_id if hasattr(commercial_agent, 'session_id') else None
+                # Vérifier si session_id est None et en créer une nouvelle si nécessaire
+                if not current_session_id and hasattr(commercial_agent, 'set_session_id'):
+                    try:
+                        current_session_id = commercial_agent.set_session_id()
+                        logging.info(f"Nouvelle session créée: {current_session_id[:8] if current_session_id else 'None'}")
+                    except Exception as e:
+                        logging.error(f"Erreur création session: {str(e)}")
+            else:
+                current_session_id = None
+                
             # Nettoyer la réponse de tout commentaire de coordination
             content = self._clean_response(response)
+            logging.debug(f"Réponse générée: {mask_sensitive_data(content, 100)}")
             
             # Ajouter le lien Calendly dans les actions si c'est une conversation commerciale
             actions = []
@@ -692,19 +846,149 @@ class PortfolioTeamService:
                         "type": "consultation"
                     }
                 })
+                logging.debug("Action Calendly ajoutée à la réponse")
             
+            # CORRECTION: Toujours inclure la session_id dans la réponse si conversation commerciale
+            if commercial_conversation:
+                commercial_agent = next((agent for agent in self.agents if agent.name == "Commercial Agent"), None)
+                if commercial_agent and hasattr(commercial_agent, 'session_id'):
+                    current_session_id = commercial_agent.session_id
+                    logging.info(f"Session ID préservée: {current_session_id[:8] if current_session_id else 'None'}")
+            
+            # Récupérer la session_id de l'agent cible ou utiliser None (JSON null)
+            if not current_session_id and target_agent and hasattr(target_agent, 'session_id'):
+                current_session_id = target_agent.session_id
+                if current_session_id:
+                    logging.debug(f"Session ID dans la réponse: {current_session_id[:8] if current_session_id else 'None'}...")
+            
+            # IMPORTANT: Garantir que toutes les valeurs sont JSON-serializable
+            # Python None sera serialisé en JSON null
             return {
                 "response": content,
                 "actions": actions,
-                "session_id": target_agent.session_id if target_agent else None
+                "session_id": current_session_id
             }
             
         except Exception as e:
-            logging.error(f"❌ Erreur génération réponse: {str(e)}")
+            logging.error(f"❌ Erreur génération réponse: {type(e).__name__}")
+            logging.debug(f"Détail de l'erreur: {str(e)}")
             return {
                 "response": "Je rencontre une difficulté technique. Merci de reformuler votre question.",
                 "actions": []
             }
+
+    def _is_off_topic_question(self, query: str) -> bool:
+        """
+        Détecte si une question est hors sujet (non liée au portfolio, à Lucas ou à son expertise)
+        
+        Args:
+            query: La question posée par l'utilisateur
+            
+        Returns:
+            bool: True si la question est hors sujet, False sinon
+        """
+        # Liste de mots-clés indiquant des sujets généraux hors du domaine d'expertise
+        off_topic_keywords = [
+            "distance", "terre", "lune", "planète", "soleil", "galaxie", "univers",
+            "guerre", "bataille", "histoire", "dates", "roi", "reine", "président",
+            "animal", "espèce", "pays", "capitale", "ville", "population", "géographie",
+            "recette", "cuisine", "sport", "football", "tennis", "basketball",
+            "physique", "chimie", "biologie", "formule", "équation", "calcul"
+        ]
+        
+        # Liste de mots-clés indiquant des sujets pertinents (pour éviter les faux positifs)
+        relevant_keywords = [
+            "lucas", "bometon", "portfolio", "projet", "ux", "ui", "design",
+            "expérience", "utilisateur", "intelligence", "artificielle", "ia",
+            "service", "consultation", "expertise", "commercial", "contact",
+            "rendez-vous", "rdv", "compétence", "llm", "chatgpt", "agent",
+            "système", "interface", "application", "web", "mobile", "innovation",
+            # Ajout de mots-clés spécifiques à l'IA agentique
+            "agentic", "agno", "agnetic", "agentic ia", "agent ia", "ia agent",
+            "génératif", "générative", "génération", "prompt", "gpt", "openai",
+            "fine-tuning", "embedding", "vector", "rag", "recherche", "retrieval",
+            "multimodal", "vision", "claude", "anthropic", "gemini", "mistral",
+            "ollama", "transformer", "modèle de langage", "large language model"
+        ]
+        
+        # Normaliser la requête
+        query_lower = query.lower()
+        
+        # IMPORTANT: Si la requête contient une question sur l'IA ou les agents, la considérer comme pertinente
+        ia_related = any(term in query_lower for term in ["ia", "ai", "agent", "intelligence", "artificielle", "agentic"])
+        if ia_related:
+            logging.info("Question détectée comme liée à l'IA ou aux agents - considérée pertinente")
+            return False
+        
+        # Si la question contient des mots-clés pertinents, la considérer comme pertinente
+        for keyword in relevant_keywords:
+            if keyword in query_lower:
+                logging.info(f"Mot-clé pertinent détecté: {keyword}")
+                return False
+        
+        # Vérifier si la question contient des mots-clés hors sujet
+        contains_off_topic = False
+        for keyword in off_topic_keywords:
+            if keyword in query_lower:
+                logging.info(f"Mot-clé hors sujet détecté: {keyword}")
+                contains_off_topic = True
+                break
+        
+        # Si la question est courte (moins de 4 mots) et ne contient pas explicitement de mots-clés hors sujet,
+        # la considérer comme pertinente
+        if len(query.split()) <= 4 and not contains_off_topic:
+            return False
+            
+        # Vérification supplémentaire pour les questions définitionnelles
+        definition_patterns = ["qu'est-ce que", "qu'est ce que", "c'est quoi", "définir", "défini", "explique", "expliquer"]
+        if any(pattern in query_lower for pattern in definition_patterns):
+            # Pour les questions définitionnelles, ne les marquer hors sujet que si elles contiennent des mots-clés hors sujet
+            return contains_off_topic
+            
+        # Si la question contient des mots-clés hors sujet, la considérer comme hors sujet
+        if contains_off_topic:
+            return True
+            
+        # Par défaut, considérer la question comme pertinente
+        return False
+
+    def _check_for_direct_technical_query(self, query):
+        """
+        Vérifie si la requête est directement une question technique sur l'IA
+        et fournit une réponse directe si c'est le cas
+        
+        Args:
+            query: La requête de l'utilisateur
+            
+        Returns:
+            str: Une définition technique si c'est une question directe, None sinon
+        """
+        # Normaliser la requête
+        normalized_query = query.lower()
+        
+        # Vérifier si c'est une demande de définition
+        is_definition_query = any(term in normalized_query for term in 
+                                 ["qu'est-ce que", "qu'est ce que", "c'est quoi", "définir", 
+                                  "défini", "définition", "explique", "expliquer", "qu'est"])
+        
+        if not is_definition_query:
+            return None
+            
+        # Vérifier les sujets techniques spécifiques
+        if any(term in normalized_query for term in ["agentic ia", "ia agentique", "agentic", "agnetic"]):
+            return """L'IA agentique (agentic AI), domaine d'expertise clé de Lucas Bometon, désigne des systèmes IA autonomes capables de planifier, raisonner et exécuter des tâches pour atteindre des objectifs définis. Dans ses projets, Lucas combine cette technologie avec l'UX design pour créer des interfaces utilisateur qui tirent parti de ces agents intelligents tout en restant intuitives et centrées sur l'humain. Son approche unique permet de développer des systèmes d'IA agentique réellement utiles et accessibles."""
+            
+        elif "agent" in normalized_query or "agnt" in normalized_query:
+            return """Les agents IA, au cœur de l'expertise de Lucas Bometon, sont des systèmes autonomes qui perçoivent leur environnement, prennent des décisions et agissent pour atteindre des objectifs spécifiques. Lucas se spécialise dans la conception de ces agents en mettant l'accent sur l'équilibre entre autonomie et contrôle utilisateur, notamment à travers des équipes d'agents spécialisés pour résoudre des problèmes complexes. Son portfolio inclut plusieurs projets d'agents collaboratifs augmentés par une UX rigoureuse."""
+            
+        elif any(term in normalized_query for term in ["générative", "génératif", "génération"]):
+            return """L'IA générative, un des domaines d'expertise de Lucas Bometon, crée du contenu original (texte, images, audio) en apprenant des modèles à partir de vastes ensembles de données. Lucas se distingue par sa capacité à intégrer ces technologies dans des expériences utilisateur fluides et intuitives, en concevant des interfaces qui rendent l'IA générative accessible aux utilisateurs finaux. Son approche combine la puissance des LLM avec une conception UX centrée sur les besoins utilisateurs réels."""
+            
+        elif "ia" in normalized_query or "intelligence artificielle" in normalized_query:
+            return """L'intelligence artificielle (IA) est au cœur de l'expertise de Lucas Bometon, qui se spécialise dans la conception d'expériences IA centrées sur l'humain. Sa vision unique combine la puissance des systèmes d'IA avec une conception UX rigoureuse, notamment dans les domaines de l'IA agentique et générative. Lucas a développé une méthodologie permettant d'intégrer ces technologies complexes dans des interfaces intuitives et accessibles, tout en respectant les principes éthiques et l'utilisabilité."""
+            
+        # Pas de sujet technique spécifique identifié
+        return None
 
 # Classes de compatibilité avec l'ancien code - redirection vers le nouveau service d'équipe
 class AgnoService:
@@ -756,6 +1040,9 @@ class CommercialAgnoService:
         # Préparation de la requête pour l'agent commercial
         query_with_hint = f"[COMMERCIAL] {query} - BESOIN D'AIDE COMMERCIALE - QUALIFICATION DE PROJET"
         
+        # DÉBOGAGE: Log pour la session commerciale
+        logging.info(f"CommercialAgnoService - Session ID: {session_id[:8] if session_id else 'None'}")
+        
         # Si un session_id est fourni, l'ajouter aux metadata pour continuer la conversation
         metadata = {"session_id": session_id} if session_id else {}
         
@@ -765,6 +1052,10 @@ class CommercialAgnoService:
         # Renvoyer la session_id avec la réponse pour que le client puisse continuer la conversation
         commercial_agent = next((agent for agent in self.team_service.agents if agent.name == "Commercial Agent"), None)
         current_session_id = commercial_agent.session_id if commercial_agent else None
+        
+        # CORRECTION: S'assurer que la réponse contient toujours le session_id
+        if isinstance(response, dict) and "session_id" not in response and current_session_id:
+            response["session_id"] = current_session_id
         
         # Si c'est une réponse simple, la transformer en dictionnaire avec le session_id
         if isinstance(response, str):

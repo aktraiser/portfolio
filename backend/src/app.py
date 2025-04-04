@@ -79,41 +79,23 @@ async def agno_chat():
         # Générer une réponse avec Agno
         if session_id:
             # Si un session_id est fourni, l'ajouter aux metadata
-            response = await agno_service.generate_response(message, context, {"session_id": session_id})
+            metadata = {"session_id": session_id}
+            response = await agno_service.generate_response(message, context, metadata)
         else:
             response = await agno_service.generate_response(message, context)
         
-        # Extraction du contenu de la réponse selon son type
-        response_content = ""
-        current_session_id = None
+        # Si c'est déjà un dictionnaire, le traiter directement
+        if isinstance(response, dict):
+            # Ajouter le contexte si nécessaire
+            if 'context' not in response:
+                response['context'] = context
+            return jsonify(response)
         
-        # Si c'est un dictionnaire avec content et session_id
-        if isinstance(response, dict) and 'content' in response:
-            response_content = response.get('content', "")
-            current_session_id = response.get('session_id', None)
-        # Si c'est un objet Pydantic
-        elif hasattr(response, "model_dump"):
-            response_data = response.model_dump()
-            response_content = response_data.get("content", str(response))
-            current_session_id = response_data.get("session_id", None)
-        # Si c'est une chaîne
-        elif isinstance(response, str):
-            response_content = response
-        else:
-            # Fallback: convertir en string
-            response_content = str(response)
-        
-        # Construction de la réponse JSON
-        response_json = {
-            'response': response_content,
+        # Sinon, construire une réponse propre
+        return jsonify({
+            'response': str(response),
             'context': context
-        }
-        
-        # Ajouter session_id à la réponse si disponible
-        if current_session_id:
-            response_json['session_id'] = current_session_id
-        
-        return jsonify(response_json)
+        })
         
     except Exception as e:
         logger.error(f"Error in agno_chat: {str(e)}")
@@ -132,10 +114,14 @@ async def presentation():
         # Générer une réponse avec l'agent de présentation
         response = await presentation_service.generate_response(message, context)
         
-        return jsonify({
-            'response': response,
-            'context': context
-        })
+        # Traitement de la réponse pour s'assurer qu'elle est compatible JSON
+        if isinstance(response, dict):
+            return jsonify(response)
+        else:
+            return jsonify({
+                'response': str(response),
+                'context': context
+            })
     except Exception as e:
         logger.error(f"Erreur dans presentation: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -157,21 +143,19 @@ async def project():
         
         # Utiliser l'agent Commercial au lieu de l'agent Project pour la qualification de projet
         # Cela nous permet de maintenir la continuité de la qualification
-        response = await commercial_service.generate_response(enhanced_message, context, session_id)
+        response = await project_service.generate_response(enhanced_message, context)
         
-        # Extraire session_id pour permettre la continuité des conversations
-        session_id = None
-        if isinstance(response, dict) and 'session_id' in response:
-            session_id = response.get('session_id')
-            content = response.get('content', str(response))
+        # Traitement de la réponse pour s'assurer qu'elle est compatible JSON
+        if isinstance(response, dict):
+            # Ajouter le contexte si non présent
+            if 'context' not in response:
+                response['context'] = context
+            return jsonify(response)
         else:
-            content = str(response)
-        
-        return jsonify({
-            'response': content,
-            'context': context,
-            'session_id': session_id
-        })
+            return jsonify({
+                'response': str(response),
+                'context': context
+            })
     except Exception as e:
         logger.error(f"Erreur dans project: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -189,10 +173,14 @@ async def info():
         # Générer une réponse avec l'agent d'information
         response = await info_service.generate_response(message, context)
         
-        return jsonify({
-            'response': response,
-            'context': context
-        })
+        # Traitement de la réponse pour s'assurer qu'elle est compatible JSON
+        if isinstance(response, dict):
+            return jsonify(response)
+        else:
+            return jsonify({
+                'response': str(response),
+                'context': context
+            })
     except Exception as e:
         logger.error(f"Erreur dans info: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -274,6 +262,60 @@ async def root():
 @app.route('/api/health', methods=['GET'])
 async def health_check():
     return jsonify({'status': 'healthy'})
+
+@app.route('/api/chat/commercial', methods=['POST'])
+async def chat_commercial():
+    """
+    API pour les discussions avec l'agent commercial - maintient une session
+    """
+    try:
+        data = request.json
+        query = data.get('query', '')
+        context = data.get('context', '')
+        session_id = data.get('session_id', None)
+        
+        # Log pour déboguer la session
+        app.logger.info(f"Appel API commercial - Session ID reçue: {session_id[:8] if session_id else 'None'}")
+        
+        # Instancier le service commercial
+        commercial_service = CommercialAgnoService()
+        
+        if session_id:
+            # Si un session_id est fourni, l'ajouter aux metadata
+            metadata = {"session_id": session_id}
+            app.logger.info(f"Utilisation de la session commerciale existante: {session_id[:8]}")
+            response = await commercial_service.generate_response(query, context, session_id)
+        else:
+            # S'il n'y a pas de session_id, en créer une nouvelle
+            app.logger.info("Création d'une nouvelle session commerciale")
+            response = await commercial_service.generate_response(query, context)
+            
+        # S'assurer que la réponse contient une session_id valide
+        if isinstance(response, dict) and "session_id" not in response:
+            app.logger.warning("La réponse ne contient pas de session_id")
+            # Récupérer l'agent commercial pour obtenir sa session_id
+            commercial_agent = None
+            for agent in commercial_service.team_service.agents:
+                if agent.name == "Commercial Agent":
+                    commercial_agent = agent
+                    break
+            
+            if commercial_agent and hasattr(commercial_agent, 'session_id'):
+                response["session_id"] = commercial_agent.session_id
+                app.logger.info(f"Session ID ajoutée à la réponse: {commercial_agent.session_id[:8] if commercial_agent.session_id else 'None'}")
+        
+        # Vérifier si la réponse est un dictionnaire
+        if not isinstance(response, dict):
+            response = {"response": str(response)}
+        
+        # Renvoyer la réponse
+        return jsonify(response)
+    except Exception as e:
+        app.logger.error(f"Erreur lors du traitement de la demande commerciale: {str(e)}")
+        return jsonify({
+            "response": "Je rencontre un problème technique. Veuillez réessayer.",
+            "error": str(e)
+        }), 500
 
 # Fonction pour trouver un port disponible
 def find_available_port(start_port=5003, max_attempts=10):

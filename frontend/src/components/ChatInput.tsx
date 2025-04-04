@@ -3,13 +3,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { ArrowUp, Mic, MicOff, Loader2 } from 'lucide-react';
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  audioUrl?: string;
-  actions?: Action[];
-}
-
 // Interface pour les actions
 interface Action {
   type: string;
@@ -25,8 +18,19 @@ interface Action {
 // Interface pour gérer la réponse de l'API
 interface ApiResponse {
   response: string;
-  context?: string;
+  actions?: Array<{
+    type: string;
+    label: string;
+    url: string;
+  }>;
   session_id?: string;
+}
+
+// Interface pour les messages de chat
+interface Message {
+  content: string;
+  role: 'user' | 'assistant';
+  audioUrl?: string;
   actions?: Action[];
 }
 
@@ -64,17 +68,22 @@ const ActionButton: React.FC<{ action: Action }> = ({ action }) => {
 };
 
 export function ChatInput() {
-  const [inputValue, setInputValue] = useState('');
-  const [isConversationOpen, setIsConversationOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const [placeholderText, setPlaceholderText] = useState("Comment puis-je vous aider ?");
+  const [actions, setActions] = useState<any[]>([]);
+  const [isCommercial, setIsCommercial] = useState(false); // Flag pour le mode commercial
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const audioChunks = useRef<Blob[]>([]);
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
+  const [isConversationOpen, setIsConversationOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [isTablet, setIsTablet] = useState(false);
+  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null); // Référence pour le scroll automatique
   
   // Animation du placeholder
   useEffect(() => {
@@ -100,23 +109,25 @@ export function ChatInput() {
     return () => clearInterval(intervalId);
   }, [isConversationOpen]); // Ajout de la dépendance isConversationOpen
   
-  // Détection du mobile
+  // Détection du mobile et de la tablette
   useEffect(() => {
-    const checkIfMobile = () => {
-      setIsMobile(window.innerWidth < 768);
+    const checkDeviceType = () => {
+      const width = window.innerWidth;
+      setIsMobile(width < 640); // Mobile en dessous de 640px
+      setIsTablet(width >= 640 && width < 1024); // Tablette entre 640px et 1024px
     };
     
-    checkIfMobile();
-    window.addEventListener('resize', checkIfMobile);
+    checkDeviceType();
+    window.addEventListener('resize', checkDeviceType);
     
     return () => {
-      window.removeEventListener('resize', checkIfMobile);
+      window.removeEventListener('resize', checkDeviceType);
     };
   }, []);
 
   // Ajout d'une classe au body lorsque le volet est ouvert
   useEffect(() => {
-    if (!isMobile) {
+    if (!isMobile && !isTablet) {
       if (isConversationOpen) {
         document.body.classList.add('conversation-open');
       } else {
@@ -124,10 +135,16 @@ export function ChatInput() {
       }
     }
     
+    // Émettre un événement personnalisé lorsque l'état de la conversation change
+    const event = new CustomEvent('conversationStateChanged', { 
+      detail: { isOpen: isConversationOpen } 
+    });
+    document.dispatchEvent(event);
+    
     return () => {
       document.body.classList.remove('conversation-open');
     };
-  }, [isConversationOpen, isMobile]);
+  }, [isConversationOpen, isMobile, isTablet]);
 
   // Ajuster la hauteur du textarea en fonction du contenu
   useEffect(() => {
@@ -135,7 +152,7 @@ export function ChatInput() {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
-  }, [inputValue]);
+  }, [input]);
 
   // Gestion de l'enregistrement audio
   const startRecording = async () => {
@@ -159,7 +176,7 @@ export function ChatInput() {
       recorder.start();
       setIsRecording(true);
     } catch (error) {
-      console.error('Error accessing microphone:', error);
+      // Suppression de console.error
     }
   };
 
@@ -185,7 +202,7 @@ export function ChatInput() {
         const base64Audio = reader.result as string;
         const audioData = base64Audio.split(',')[1];
 
-        const newMessage: ChatMessage = {
+        const newMessage: Message = {
           role: 'user',
           content: '🎤 Audio message'
         };
@@ -217,27 +234,20 @@ export function ChatInput() {
 
           // Prioritize top-level 'actions' if it exists and is a valid array
           if (Array.isArray(data.actions) && data.actions.length > 0) {
-              console.log('ℹ️ Utilisation des champs "response" et "actions" de premier niveau.');
               finalContent = typeof data.response === 'string' ? data.response : JSON.stringify(data.response); // Ensure content is a string
               finalActions = data.actions;
           }
           // If top-level 'actions' is missing or empty, check if 'response' might contain the nested structure
           else if (typeof data.response === 'string') {
-              console.log('ℹ️ Champ "actions" de premier niveau absent ou vide. Tentative de parsing du champ "response".');
               try {
                   // Replace single quotes ONLY if it looks like a Python dict literal string
                   let potentialJsonString = data.response;
                   // Basic check if it looks like an object string
                   if (potentialJsonString.trim().startsWith('{') && potentialJsonString.trim().endsWith('}')) {
-                     // WARNING: This replace is fragile and might corrupt content if the string contains single quotes.
-                     console.log('Original string to parse:', potentialJsonString);
-                     // Replace single quotes used for keys/values with double quotes
+                     // Suppression des console.log
                      potentialJsonString = potentialJsonString.replace(/'/g, '"');
                      // Attempt to fix common issues like d" => d'
                      potentialJsonString = potentialJsonString.replace(/([a-zA-Z])"([a-zA-Z])/g, "$1'$2");
-                     console.log('String after replace attempt:', potentialJsonString);
-                  } else {
-                      console.log('String does not look like dict literal, using as is.');
                   }
 
                   const parsedInnerData = JSON.parse(potentialJsonString);
@@ -247,29 +257,25 @@ export function ChatInput() {
                       finalContent = parsedInnerData.response;
                       // Use inner actions. Ensure it's an array.
                       finalActions = Array.isArray(parsedInnerData.actions) ? parsedInnerData.actions : undefined;
-                      console.log('✅ Données internes JSON parsées avec succès depuis le champ "response". Inner actions:', finalActions);
                   } else {
                       // Parsed object structure is unexpected. Use original 'response' string as content.
                       finalContent = data.response;
                       finalActions = undefined; // No valid actions found
-                      console.warn('⚠️ Structure JSON interne inattendue après parsing. Utilisation de la chaîne "response" originale comme contenu.');
                   }
               } catch (e) {
                   // Parsing failed. Treat 'response' string as plain content.
                   finalContent = data.response;
                   finalActions = undefined; // No valid actions found
-                  console.log('ℹ️ Échec du parsing JSON interne. Utilisation de la chaîne "response" originale comme contenu. Erreur:', e);
               }
           }
           // Default case: 'response' is not a string or 'actions' was missing/empty and parsing failed/not attempted
           else {
                finalContent = data.response ? JSON.stringify(data.response) : ''; // Ensure content is string, handle non-string response
                finalActions = undefined; // No actions available
-               console.log('ℹ️ Cas par défaut: Utilisation du champ "response" comme contenu. Aucune action valide trouvée.');
           }
 
           // Créer le message de l'assistant
-          const assistantMessage: ChatMessage = {
+          const assistantMessage: Message = {
             role: 'assistant',
             content: finalContent,
             // S'assurer que finalActions est bien un tableau avant de mapper
@@ -281,31 +287,24 @@ export function ChatInput() {
             })) : undefined // Mettre undefined si ce n'est pas un tableau valide
           };
           
-          console.log('💬 Message assistant créé:', assistantMessage);
           setMessages(prev => {
-            console.log('Messages précédents:', prev);
             const newMessages = [...prev, assistantMessage];
-            console.log('Nouveaux messages:', newMessages);
             return newMessages;
           });
-          
-          if (data.session_id) {
-            console.log('🔑 Session ID reçu:', data.session_id);
-          }
         } catch (error) {
-          console.error('❌ Erreur lors de l\'envoi du message:', error);
+          // Suppression de console.error
         } finally {
           setIsLoading(false);
         }
       };
     } catch (error) {
-      console.error('Error sending audio message:', error);
+      // Suppression de console.error
       setIsLoading(false);
     }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputValue(e.target.value);
+    setInput(e.target.value);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -316,21 +315,19 @@ export function ChatInput() {
   };
 
   const handleSendMessage = async () => {
-    if (inputValue.trim()) {
-      console.log('🚀 Envoi du message:', inputValue.trim());
+    if (input.trim()) {
       
-      const newMessage: ChatMessage = {
+      const newMessage: Message = {
         role: 'user',
-        content: inputValue.trim()
+        content: input.trim()
       };
       
       setMessages(prev => [...prev, newMessage]);
-      setInputValue('');
+      setInput('');
       setIsConversationOpen(true);
       setIsLoading(true);
       
       try {
-        console.log('📤 Requête API en cours...');
         const response = await fetch(`${API_URL}/agno_chat`, {
           method: 'POST',
           headers: {
@@ -346,34 +343,27 @@ export function ChatInput() {
         }
 
         const data = await response.json();
-        console.log('📥 Réponse API reçue:', data);
+
         
         let finalContent: string = '';
         let finalActions: Action[] | undefined = undefined;
 
         // Prioritize top-level 'actions' if it exists and is a valid array
         if (Array.isArray(data.actions) && data.actions.length > 0) {
-            console.log('ℹ️ Utilisation des champs "response" et "actions" de premier niveau.');
             finalContent = typeof data.response === 'string' ? data.response : JSON.stringify(data.response); // Ensure content is a string
             finalActions = data.actions;
         }
         // If top-level 'actions' is missing or empty, check if 'response' might contain the nested structure
         else if (typeof data.response === 'string') {
-            console.log('ℹ️ Champ "actions" de premier niveau absent ou vide. Tentative de parsing du champ "response".');
             try {
                 // Replace single quotes ONLY if it looks like a Python dict literal string
                 let potentialJsonString = data.response;
                 // Basic check if it looks like an object string
                 if (potentialJsonString.trim().startsWith('{') && potentialJsonString.trim().endsWith('}')) {
-                   // WARNING: This replace is fragile and might corrupt content if the string contains single quotes.
-                   console.log('Original string to parse:', potentialJsonString);
-                   // Replace single quotes used for keys/values with double quotes
+                   // Suppression des console.log
                    potentialJsonString = potentialJsonString.replace(/'/g, '"');
                    // Attempt to fix common issues like d" => d'
                    potentialJsonString = potentialJsonString.replace(/([a-zA-Z])"([a-zA-Z])/g, "$1'$2");
-                   console.log('String after replace attempt:', potentialJsonString);
-                } else {
-                    console.log('String does not look like dict literal, using as is.');
                 }
 
                 const parsedInnerData = JSON.parse(potentialJsonString);
@@ -383,29 +373,25 @@ export function ChatInput() {
                     finalContent = parsedInnerData.response;
                     // Use inner actions. Ensure it's an array.
                     finalActions = Array.isArray(parsedInnerData.actions) ? parsedInnerData.actions : undefined;
-                    console.log('✅ Données internes JSON parsées avec succès depuis le champ "response". Inner actions:', finalActions);
                 } else {
                     // Parsed object structure is unexpected. Use original 'response' string as content.
                     finalContent = data.response;
                     finalActions = undefined; // No valid actions found
-                    console.warn('⚠️ Structure JSON interne inattendue après parsing. Utilisation de la chaîne "response" originale comme contenu.');
                 }
             } catch (e) {
                 // Parsing failed. Treat 'response' string as plain content.
                 finalContent = data.response;
                 finalActions = undefined; // No valid actions found
-                console.log('ℹ️ Échec du parsing JSON interne. Utilisation de la chaîne "response" originale comme contenu. Erreur:', e);
             }
         }
         // Default case: 'response' is not a string or 'actions' was missing/empty and parsing failed/not attempted
         else {
              finalContent = data.response ? JSON.stringify(data.response) : ''; // Ensure content is string, handle non-string response
              finalActions = undefined; // No actions available
-             console.log('ℹ️ Cas par défaut: Utilisation du champ "response" comme contenu. Aucune action valide trouvée.');
         }
 
         // Créer le message de l'assistant
-        const assistantMessage: ChatMessage = {
+        const assistantMessage: Message = {
           role: 'assistant',
           content: finalContent,
           // S'assurer que finalActions est bien un tableau avant de mapper
@@ -417,19 +403,12 @@ export function ChatInput() {
           })) : undefined // Mettre undefined si ce n'est pas un tableau valide
         };
         
-        console.log('💬 Message assistant créé:', assistantMessage);
         setMessages(prev => {
-          console.log('Messages précédents:', prev);
           const newMessages = [...prev, assistantMessage];
-          console.log('Nouveaux messages:', newMessages);
           return newMessages;
         });
-        
-        if (data.session_id) {
-          console.log('🔑 Session ID reçu:', data.session_id);
-        }
       } catch (error) {
-        console.error('❌ Erreur lors de l\'envoi du message:', error);
+        // Suppression de console.error
       } finally {
         setIsLoading(false);
       }
@@ -448,10 +427,7 @@ export function ChatInput() {
   };
 
   // Composant pour le rendu des messages
-  const MessageComponent: React.FC<{ message: ChatMessage }> = ({ message }) => {
-    console.log('🎯 Rendu du message:', message);
-    console.log('Actions du message:', message.actions);
-    
+  const MessageComponent: React.FC<{ message: Message }> = ({ message }) => {
     return (
       <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
         <div 
@@ -468,7 +444,6 @@ export function ChatInput() {
                 <button
                   key={actionIndex}
                   onClick={() => {
-                    console.log('🔗 Clic sur l\'action:', action);
                     window.open(action.url, '_blank');
                   }}
                   className="w-full bg-[#B82EAF] text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
@@ -483,9 +458,9 @@ export function ChatInput() {
               ))}
             </div>
           )}
-          {message.audioUrl && message.role === 'assistant' && (
+          {message.content.includes('🎤 Audio message') && message.role === 'assistant' && (
             <button
-              onClick={() => playAudio(message.audioUrl!)}
+              onClick={() => playAudio(message.content.split(': ')[1]!)}
               className="mt-2 text-sm text-blue-500 hover:text-blue-600"
             >
               Écouter la réponse
@@ -496,22 +471,90 @@ export function ChatInput() {
     );
   };
 
+  const sendMessage = async (message: string) => {
+    try {
+      setIsLoading(true);
+      setMessages([...messages, { content: message, role: 'user' }]);
+      
+      // Déterminer l'API à utiliser
+      const apiUrl = isCommercial 
+        ? '/api/chat/commercial'
+        : '/api/chat';
+      
+      // Construire la requête API avec la session_id si disponible
+      const requestBody: any = {
+        query: message,
+        context: ""
+      };
+      
+      // Ajouter la session_id pour les conversations commerciales
+      if (isCommercial && sessionId) {
+        requestBody.session_id = sessionId;
+        console.log("Utilisation de la session commerciale:", sessionId);
+      }
+      
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+      
+      const data: ApiResponse = await response.json();
+      
+      // Mettre à jour la session_id si présente dans la réponse
+      if (data.session_id && isCommercial) {
+        setSessionId(data.session_id);
+        console.log("Nouvelle session_id reçue:", data.session_id);
+      }
+      
+      // Traiter les actions si présentes
+      if (data.actions && data.actions.length > 0) {
+        setActions(data.actions);
+      } else {
+        setActions([]);
+      }
+      
+      setMessages([...messages, { content: message, role: 'user' }, { content: data.response, role: 'assistant' }]);
+      setInput('');
+      
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setMessages([...messages, { content: message, role: 'user' }, { content: "Désolé, une erreur s'est produite lors de la communication avec le serveur.", role: 'assistant' }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Fonction pour défiler vers le dernier message
+  const scrollToBottom = () => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  // Défilement automatique lorsque les messages changent
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading]);
+
   return (
-    <div className={`w-full mx-auto relative ${isMobile ? 'mb-6 mt-6' : 'mb-12 mt-16'} transition-all duration-300 rounded-2xl ${isMobile ? 'p-2' : 'p-6'} ${isConversationOpen && !isMobile ? 'conversation-container' : ''}`}>
-      <div className={`${isMobile ? 'max-w-full px-2' : 'max-w-3xl px-6'} mx-auto`}>
+    <div className={`w-full mx-auto relative ${isMobile || isTablet ? 'mb-6 mt-6' : 'mb-12 mt-16'} transition-all duration-300 rounded-2xl ${isMobile || isTablet ? 'p-2' : 'p-6'} ${isConversationOpen && !isMobile && !isTablet ? 'conversation-container' : ''}`}>
+      <div className={`${isMobile || isTablet ? 'max-w-full px-2' : 'max-w-3xl px-6'} mx-auto`}>
         {/* En-tête aligné à gauche */}
-        <div className={`${isMobile ? 'mb-4' : 'mb-10'} text-left`}>
-          <div className={`${isMobile ? 'mb-1' : 'mb-3'}`}>
-            <h1 className={`${isMobile ? 'text-4xl' : 'text-5xl'} font-bold text-[#B82EAF]`}>Hi, I&apos;m 
+        <div className={`${isMobile || isTablet ? 'mb-4' : 'mb-10'} text-left`}>
+          <div className={`${isMobile || isTablet ? 'mb-1' : 'mb-3'}`}>
+            <h1 className={`${isMobile || isTablet ? 'text-4xl' : 'text-5xl'} font-bold text-[#B82EAF]`}>Hi, I&apos;m 
               <span className="inline-flex items-center ml-2">
-                <span className={`font-extrabold ${isMobile ? 'text-3xl' : 'text-4xl'} text-white`}>Lucas !</span>
+                <span className={`font-extrabold ${isMobile || isTablet ? 'text-3xl' : 'text-4xl'} text-white`}>Lucas !</span>
               </span>
             </h1>
           </div>
-          <div className={`${isMobile ? 'text-xl' : 'text-2xl'}`}>
+          <div className={`${isMobile || isTablet ? 'text-xl' : 'text-2xl'}`}>
             <span className="text-gray-400 font-light">I&apos;m a</span> 
             <span className="font-bold mx-1 text-white">Lead IA Designer</span> 
-            <div className={`flex ${isMobile ? 'flex-wrap' : ''} items-center ${isMobile ? 'gap-2 mt-2' : 'gap-4 mt-4'}`}>
+            <div className={`flex ${isMobile || isTablet ? 'flex-wrap' : ''} items-center ${isMobile || isTablet ? 'gap-2 mt-2' : 'gap-4 mt-4'}`}>
                 <div className="bg-[#252339] dark:bg-[#252339] px-4 py-2 rounded-md flex items-center">
                   <span className="text-white dark:text-white text-sm font-medium">Genrative IA</span>
                 </div>
@@ -532,18 +575,18 @@ export function ChatInput() {
         </div>
 
         {/* Conteneur du textarea style ChatGPT - visible uniquement quand la conversation n'est pas ouverte */}
-        {(!isConversationOpen || isMobile) && (
+        {(!isConversationOpen) && (
           <div className="relative">
             <div className="w-full">
               <div className="relative rounded-2xl bg-[#252339] dark:bg-[#252339] overflow-hidden">
                 <textarea
                   ref={textareaRef}
-                  className={`w-full ${isMobile ? 'px-3 py-4' : 'px-5 py-6'} bg-transparent resize-none outline-none ${isMobile ? 'min-h-[60px] max-h-[150px]' : 'min-h-[90px] max-h-[200px]'} pr-24 text-white dark:text-white`}
+                  className={`w-full ${isMobile || isTablet ? 'px-3 py-4' : 'px-5 py-6'} bg-transparent resize-none outline-none ${isMobile || isTablet ? 'min-h-[60px] max-h-[150px]' : 'min-h-[90px] max-h-[200px]'} pr-24 text-white dark:text-white`}
                   placeholder={placeholderText}
-                  value={inputValue}
+                  value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
-                  rows={isMobile ? 2 : 3}
+                  rows={isMobile || isTablet ? 2 : 3}
                 />
                 <div className="absolute right-3 bottom-5 flex gap-2">
                   <button 
@@ -571,7 +614,7 @@ export function ChatInput() {
         )}
 
         {/* Volet latéral pour desktop (fixed sur la droite) mais qui pousse le contenu */}
-        {isConversationOpen && !isMobile && (
+        {isConversationOpen && !isMobile && !isTablet && (
           <div className="fixed top-0 right-0 h-full w-[384px] bg-white dark:bg-black border-l border-gray-200 dark:border-gray-700 shadow-lg flex flex-col z-30">
             <div className="h-16 px-5 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center shrink-0">
               <h3 className="text-xl font-bold text-gray-800 dark:text-gray-200">Conversation</h3>
@@ -597,6 +640,7 @@ export function ChatInput() {
                     </div>
                   </div>
                 )}
+                <div ref={messagesEndRef} /> {/* Élément invisible pour le scroll automatique */}
               </div>
             </div>
             <div className="p-5 border-t border-gray-200 dark:border-gray-700">
@@ -604,7 +648,7 @@ export function ChatInput() {
                 <textarea
                   className="w-full px-4 py-3 bg-gray-100 dark:bg-black border-0 rounded-2xl resize-none outline-none pr-24 text-gray-800 dark:text-gray-200"
                   placeholder={placeholderText}
-                  value={inputValue}
+                  value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   rows={2}
@@ -623,51 +667,52 @@ export function ChatInput() {
           </div>
         )}
 
-        {/* Modale pour mobile */}
-        {isConversationOpen && isMobile && (
+        {/* Modale pour mobile et tablette */}
+        {isConversationOpen && (isMobile || isTablet) && (
           <div className="fixed inset-0 bg-black z-50 flex">
             <div className="w-full h-full flex flex-col bg-black">
-              <div className="h-12 px-3 border-b border-gray-700 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-white">Conversation</h3>
+              <div className={`${isTablet ? 'h-16 px-5' : 'h-12 px-3'} border-b border-gray-700 flex justify-between items-center`}>
+                <h3 className={`${isTablet ? 'text-xl' : 'text-lg'} font-bold text-white`}>Conversation</h3>
                 <button 
                   onClick={closeConversation}
                   className="p-1.5 rounded-full hover:bg-gray-800 text-gray-300"
                   aria-label="Fermer"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className={`${isTablet ? 'h-6 w-6' : 'h-5 w-5'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
-              <div className="p-3 space-y-3 overflow-y-auto flex-grow">
+              <div className={`${isTablet ? 'p-5 space-y-5' : 'p-3 space-y-3'} overflow-y-auto flex-grow`}>
                 {messages.map((message, index) => (
                   <MessageComponent key={index} message={message} />
                 ))}
                 {isLoading && (
                   <div className="flex justify-start">
-                    <div className="bg-black p-3 rounded-lg rounded-bl-none">
+                    <div className={`bg-black ${isTablet ? 'p-4' : 'p-3'} rounded-lg rounded-bl-none`}>
                       <LoadingDots />
                     </div>
                   </div>
                 )}
+                <div ref={messagesEndRef} /> {/* Élément invisible pour le scroll automatique */}
               </div>
-              <div className="p-3 border-t border-gray-700">
+              <div className={`${isTablet ? 'p-5' : 'p-3'} border-t border-gray-700`}>
                 <div className="relative">
                   <textarea
-                    className="w-full px-3 py-2 bg-black border-0 rounded-2xl resize-none outline-none pr-20 text-white placeholder-gray-300"
+                    className={`w-full ${isTablet ? 'px-4 py-3' : 'px-3 py-2'} bg-black border-0 rounded-2xl resize-none outline-none ${isTablet ? 'pr-24' : 'pr-20'} text-white placeholder-gray-300`}
                     placeholder={placeholderText}
-                    value={inputValue}
+                    value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     rows={2}
                   />
-                  <div className="absolute right-2 bottom-2 flex gap-1.5">
+                  <div className={`absolute ${isTablet ? 'right-3 bottom-3' : 'right-2 bottom-2'} flex gap-1.5`}>
                     <button 
                       onClick={handleSendMessage}
-                      className="p-1.5 rounded-full bg-[#252339] text-white hover:bg-blue-600 transition-colors"
+                      className={`${isTablet ? 'p-2' : 'p-1.5'} rounded-full bg-[#252339] text-white hover:bg-[#B82EAF] transition-colors`}
                       aria-label="Envoyer"
                     >
-                      <ArrowUp className="h-4 w-4" />
+                      <ArrowUp className={`${isTablet ? 'h-5 w-5' : 'h-4 w-4'}`} />
                     </button>
                   </div>
                 </div>
