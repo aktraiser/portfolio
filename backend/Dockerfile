@@ -10,4 +10,4 @@ COPY . .
 
 ENV PYTHONPATH=/app
 
-CMD ["hypercorn", "--bind", "0.0.0.0:5000", "--workers", "4", "src.app:app"] 
+CMD ["hypercorn", "--bind", "0.0.0.0:5003", "--workers", "4", "src.app:app"] 

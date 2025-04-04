@@ -78,7 +78,7 @@ export default function BlogArticleLoader({ slug }: { slug: string }) {
           mainImageCaption: articleData.subtitle,
           subheading2: articleData.content.subheading2,
           subheading2Content: articleData.content.subheading2Content,
-          conclusion: articleData.content.conclusion
+          conclusion: articleData.content.conclusion || ''
         }
         
         setArticle(transformedData)

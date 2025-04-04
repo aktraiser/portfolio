@@ -8,6 +8,9 @@ RUN npm install
 
 COPY . .
 
+# Supprimer le favicon.ico du dossier app pour éviter le conflit
+RUN rm -f src/app/favicon.ico
+
 # Add this environment variable to skip linting during the build
 ENV NEXT_TELEMETRY_DISABLED 1
 ENV NODE_ENV production

@@ -1,5 +1,32 @@
 import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/react/20/solid'
 
+export interface KeyPoint {
+  title: string;
+  content: string;
+}
+
+export interface Quote {
+  text: string;
+  authorName: string;
+  authorTitle: string;
+  authorImageUrl: string;
+}
+
+export interface BlogArticleProps {
+  tag?: string;
+  title: string;
+  introduction: string;
+  mainContent: string;
+  keyPoints?: KeyPoint[];
+  subheading1?: string;
+  subheading1Content?: string;
+  quote?: Quote;
+  mainImageUrl?: string;
+  mainImageCaption?: string;
+  subheading2?: string;
+  subheading2Content?: string;
+  conclusion?: string;
+}
 
 export default function BlogArticle({
   tag = 'Introducing',
@@ -42,9 +69,11 @@ export default function BlogArticle({
               ))}
             </ul>
           )}
-          <p className="mt-8">
-            {conclusion}
-          </p>
+          {conclusion && (
+            <p className="mt-8">
+              {conclusion}
+            </p>
+          )}
           {subheading1 && (
             <>
               <h2 className="mt-16 text-pretty text-3xl font-semibold tracking-tight text-gray-900">
