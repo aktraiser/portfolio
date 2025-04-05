@@ -34,7 +34,7 @@ interface Message {
   actions?: Action[];
 }
 
-const API_URL = 'http://localhost:5003/api';
+const API_URL = 'https://portfolio-backend-5aan.onrender.com/api';
 
 // Ajout du composant LoadingDots
 const LoadingDots = () => {
